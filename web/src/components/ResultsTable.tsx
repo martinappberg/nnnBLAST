@@ -58,8 +58,8 @@ export function ResultsTable({
             onClick={() => handleSort(key)}
             className={`px-3 py-1 rounded-full border transition-colors ${
               sortKey === key
-                ? "border-[#B4637A] bg-[#FFF0F3] text-[#B4637A] font-semibold"
-                : "border-[#F0DDE3] hover:border-[#B4637A] hover:bg-[#FFF0F3]"
+                ? "border-[#F9A8B8] bg-[#FEF2F2] text-[#F9A8B8] font-semibold"
+                : "border-[#FECDD3] hover:border-[#F9A8B8] hover:bg-[#FEF2F2]"
             }`}
           >
             {label}
@@ -112,8 +112,8 @@ function HitCard({
     <div
       className={`bg-white rounded-xl border transition-colors ${
         expanded
-          ? "border-[#B4637A] shadow-md"
-          : "border-[#F0DDE3] hover:border-[#B4637A]/50 shadow-sm"
+          ? "border-[#F9A8B8] shadow-md"
+          : "border-[#FECDD3] hover:border-[#F9A8B8]/50 shadow-sm"
       }`}
     >
       {/* Card header — clickable */}
@@ -140,7 +140,7 @@ function HitCard({
                 href={ncbiUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-mono text-[#B4637A] hover:underline"
+                className="font-mono text-[#F9A8B8] hover:underline"
                 onClick={(e) => e.stopPropagation()}
               >
                 {hit.subject_id}
@@ -176,12 +176,12 @@ function HitCard({
               <span className="text-[#A8A29E]">E-value</span>{" "}
               <span className="font-semibold">{formatEvalue(hit.evalue)}</span>
             </span>
-            <span className="text-[#F0DDE3]">|</span>
+            <span className="text-[#FECDD3]">|</span>
             <span>
               <span className="text-[#A8A29E]">Score</span>{" "}
               <span className="font-semibold">{hit.total_score}</span>
             </span>
-            <span className="text-[#F0DDE3]">|</span>
+            <span className="text-[#FECDD3]">|</span>
             <span>
               <span className="text-[#A8A29E]">Bit</span>{" "}
               <span className="font-semibold">{hit.bit_score.toFixed(1)}</span>
@@ -209,7 +209,7 @@ function HitCard({
 
       {/* Expanded alignment details */}
       {expanded && (
-        <div className="border-t border-[#F0DDE3] p-4">
+        <div className="border-t border-[#FECDD3] p-4">
           <AlignmentView hit={hit} queryMotifs={queryMotifs} />
         </div>
       )}

@@ -49,11 +49,11 @@ export function QueryVisual({ query }: { query: string }) {
               key={i}
               className="flex items-center gap-0.5 text-xs text-[#A8A29E] shrink-0"
             >
-              <div className="border-t-2 border-dashed border-[#B4637A]/40 w-4" />
-              <span className="font-mono whitespace-nowrap text-[#B4637A]/60">
+              <div className="border-t-2 border-dashed border-[#F9A8B8]/40 w-4" />
+              <span className="font-mono whitespace-nowrap text-[#F9A8B8]/60">
                 {part.count}
               </span>
-              <div className="border-t-2 border-dashed border-[#B4637A]/40 w-4" />
+              <div className="border-t-2 border-dashed border-[#F9A8B8]/40 w-4" />
             </div>
           );
         }
@@ -62,13 +62,13 @@ export function QueryVisual({ query }: { query: string }) {
             key={i}
             className="flex items-center gap-1 text-xs text-[#A8A29E] shrink-0"
           >
-            <div className="border-t-2 border-dashed border-[#B4637A]/40 w-6" />
+            <div className="border-t-2 border-dashed border-[#F9A8B8]/40 w-6" />
             <span className="font-mono whitespace-nowrap text-[#57534E]">
               {part.min === part.max
                 ? `${part.min}`
                 : `${part.min}-${part.max}`}
             </span>
-            <div className="border-t-2 border-dashed border-[#B4637A]/40 w-6" />
+            <div className="border-t-2 border-dashed border-[#F9A8B8]/40 w-6" />
           </div>
         );
       })}
@@ -77,12 +77,12 @@ export function QueryVisual({ query }: { query: string }) {
 }
 
 const COLORS = [
-  "#B4637A",
-  "#56949F",
-  "#D7827E",
-  "#907AA9",
-  "#EA9D34",
-  "#286983",
+  "#F9A8B8",
+  "#89CCD3",
+  "#F4A9A0",
+  "#C4A8D8",
+  "#F5C76B",
+  "#7BB8CC",
 ];
 
 type VisualPart =

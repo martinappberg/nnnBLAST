@@ -183,7 +183,7 @@ function SearchPage() {
   return (
     <main className="max-w-5xl mx-auto px-6 py-8 space-y-6">
       {/* Query section */}
-      <section className="bg-white rounded-2xl shadow-sm border border-[#F0DDE3] p-6 space-y-4">
+      <section className="bg-white rounded-2xl shadow-sm border border-[#FECDD3]/50 p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-[#1C1917]">Query</h2>
           <HelpPanel />
@@ -197,7 +197,7 @@ function SearchPage() {
           {EXAMPLE_PRESETS.map((preset, i) => (
             <button
               key={i}
-              className="text-xs px-3 py-1.5 rounded-full border border-[#F0DDE3] hover:border-[#B4637A] hover:bg-[#FFF0F3] transition-colors text-[#57534E]"
+              className="text-xs px-3 py-1.5 rounded-full border border-[#FECDD3]/50 hover:border-[#F9A8B8] hover:bg-[#FFF0F3] transition-colors text-[#57534E]"
               onClick={() => setQuery(preset.query)}
               title={`${preset.description}\n\nBLAST strategy: ${preset.strategy}`}
             >
@@ -207,7 +207,7 @@ function SearchPage() {
         </div>
 
         <textarea
-          className="w-full border border-[#F0DDE3] rounded-xl px-4 py-3 font-mono text-sm focus:ring-2 focus:ring-[#B4637A] focus:border-[#B4637A] outline-none bg-white"
+          className="w-full border border-[#FECDD3]/50 rounded-xl px-4 py-3 font-mono text-sm focus:ring-2 focus:ring-[#F9A8B8] focus:border-[#F9A8B8] outline-none bg-white"
           rows={2}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -238,7 +238,7 @@ function SearchPage() {
       </section>
 
       {/* Parameters section */}
-      <section className="bg-white rounded-2xl shadow-sm border border-[#F0DDE3] p-6">
+      <section className="bg-white rounded-2xl shadow-sm border border-[#FECDD3]/50 p-6">
         <h2 className="text-lg font-semibold text-[#1C1917] mb-4">
           Parameters
         </h2>
@@ -249,7 +249,7 @@ function SearchPage() {
               Database
             </label>
             <select
-              className="w-full border border-[#F0DDE3] rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#B4637A] outline-none"
+              className="w-full border border-[#FECDD3]/50 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none"
               value={database}
               onChange={(e) => setDatabase(e.target.value)}
             >
@@ -267,7 +267,7 @@ function SearchPage() {
               E-value cutoff
             </label>
             <select
-              className="w-full border border-[#F0DDE3] rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#B4637A] outline-none"
+              className="w-full border border-[#FECDD3]/50 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none"
               value={evalCutoff}
               onChange={(e) => setEvalCutoff(Number(e.target.value))}
             >
@@ -288,7 +288,7 @@ function SearchPage() {
             </label>
             <input
               type="email"
-              className="w-full border border-[#F0DDE3] rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#B4637A] outline-none"
+              className="w-full border border-[#FECDD3]/50 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
@@ -302,7 +302,7 @@ function SearchPage() {
             </label>
             <input
               type="text"
-              className="w-full border border-[#F0DDE3] rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#B4637A] outline-none"
+              className="w-full border border-[#FECDD3]/50 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="Optional"
@@ -312,7 +312,7 @@ function SearchPage() {
 
         <div className="mt-5">
           <button
-            className="bg-[#B4637A] text-white px-8 py-2.5 rounded-xl font-semibold hover:bg-[#9B4D63] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+            className="bg-[#F9A8B8] text-[#1C1917] px-8 py-2.5 rounded-xl font-semibold hover:bg-[#F48BA0] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
             onClick={handleSearch}
             disabled={loading || !query.trim() || !email.trim()}
           >
@@ -323,22 +323,22 @@ function SearchPage() {
 
       {/* Progress */}
       {loading && progress && (
-        <section className="bg-[#FFF0F3] border border-[#F0DDE3] rounded-2xl p-5">
+        <section className="bg-[#FFF0F3] border border-[#FECDD3]/50 rounded-2xl p-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="animate-spin h-5 w-5 border-2 border-[#B4637A] border-t-transparent rounded-full" />
+              <div className="animate-spin h-5 w-5 border-2 border-[#F9A8B8] border-t-transparent rounded-full" />
               <div>
-                <div className="font-medium text-[#6B2140]">
+                <div className="font-medium text-[#1C1917]">
                   {STAGE_LABELS[progress.stage] || progress.stage}
                 </div>
                 {progress.detail && (
-                  <div className="text-sm text-[#B4637A]">
+                  <div className="text-sm text-[#E8889A]">
                     {progress.detail}
                   </div>
                 )}
               </div>
             </div>
-            <div className="text-right text-xs text-[#B4637A] font-mono tabular-nums">
+            <div className="text-right text-xs text-[#E8889A] font-mono tabular-nums">
               <div>{formatElapsed(elapsed)}</div>
               {pollCount > 0 && (
                 <div className="text-[#D7827E]">
@@ -359,7 +359,7 @@ function SearchPage() {
 
       {/* Results */}
       {results && (
-        <section className="bg-white rounded-2xl shadow-sm border border-[#F0DDE3] p-6">
+        <section className="bg-white rounded-2xl shadow-sm border border-[#FECDD3]/50 p-6">
           <ResultsTable
             results={results}
             queryMotifs={extractMotifs(query)}
@@ -372,29 +372,29 @@ function SearchPage() {
 
 function App() {
   return (
-    <div className="min-h-screen bg-[#FFF8F6]">
+    <div className="min-h-screen bg-[#FEF2F2]">
       {/* Header */}
-      <header className="bg-gradient-to-r from-[#6B2140] to-[#B4637A] text-white py-6 px-6 shadow-lg">
+      <header className="bg-gradient-to-r from-[#FECDD3] via-[#FBD5DC] to-[#FCE4EC] py-6 px-6 border-b border-[#F9B8C6]/40">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <Link to="/" className="group">
-            <h1 className="text-3xl tracking-tight">
+            <h1 className="text-3xl tracking-tight text-[#1C1917]">
               <span className="font-light">nnn</span>
-              <span className="font-bold text-[#F0DDE3]">BLAST</span>
+              <span className="font-bold text-[#BE185D]">BLAST</span>
             </h1>
-            <p className="mt-1 text-[#F0DDE3]/80 text-sm">
+            <p className="mt-1 text-[#9F7A86] text-sm">
               Structured motif nucleotide search across NCBI databases
             </p>
           </Link>
           <nav className="flex items-center gap-4">
             <Link
               to="/"
-              className="text-sm text-white/80 hover:text-white transition-colors"
+              className="text-sm text-[#6B3A4A] hover:text-[#BE185D] transition-colors"
             >
               Search
             </Link>
             <Link
               to="/about"
-              className="text-sm text-white/80 hover:text-white transition-colors"
+              className="text-sm text-[#6B3A4A] hover:text-[#BE185D] transition-colors"
             >
               About
             </Link>
@@ -407,7 +407,7 @@ function App() {
         <Route path="/about" element={<AboutPage />} />
       </Routes>
 
-      <footer className="border-t border-[#F0DDE3] py-4 px-6 text-center text-xs text-[#A8A29E] mt-8">
+      <footer className="border-t border-[#FECDD3]/50 py-4 px-6 text-center text-xs text-[#A8A29E] mt-8">
         nnnBLAST -- Structured motif nucleotide search powered by NCBI BLAST
       </footer>
     </div>

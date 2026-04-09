@@ -44,7 +44,7 @@ export function AlignmentView({
   );
 
   return (
-    <div className="bg-[#FAF0F0] rounded-xl p-4 text-xs font-mono overflow-x-auto space-y-3 border border-[#F0DDE3]">
+    <div className="bg-[#FAF0F0] rounded-xl p-4 text-xs font-mono overflow-x-auto space-y-3 border border-[#FECDD3]">
       <div className="text-[#57534E] text-xs font-sans mb-1">
         Genomic region:{" "}
         <span className="font-semibold text-[#1C1917]">
