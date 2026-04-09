@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/nnnblast-core", "crates/nnnblast-server"]
+resolver = "2"

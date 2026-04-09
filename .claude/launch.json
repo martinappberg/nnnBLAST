@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nnnblast-api",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "nnnblast-server"],
+      "port": 3001
+    },
+    {
+      "name": "nnnblast-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "web"],
+      "port": 5173
+    }
+  ]
+}
