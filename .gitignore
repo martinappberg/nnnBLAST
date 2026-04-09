@@ -1,2 +1,10 @@
 target
+node_modules
 npm_modules
+web/dist
+
+# Cloudflare Worker local state
+proxy/.wrangler/
+
+# Claude Code local config
+.claude/settings.local.json
