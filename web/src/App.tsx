@@ -10,7 +10,7 @@ import type { JobProgress, SearchResults } from "./types";
 import { DATABASES } from "./types";
 
 // Cloudflare Worker CORS proxy URL — set this after deploying the proxy
-const PROXY_URL = import.meta.env.VITE_PROXY_URL || "https://nnnblast-cors-proxy.workers.dev";
+const PROXY_URL = import.meta.env.VITE_PROXY_URL || "https://nnnblast-cors-proxy.nnnblast.workers.dev";
 
 const EXAMPLE_PRESETS = [
   {
