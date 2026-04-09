@@ -8,3 +8,6 @@ proxy/.wrangler/
 
 # Claude Code local config
 .claude/settings.local.json
+
+# macOS
+.DS_Store
