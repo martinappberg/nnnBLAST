@@ -58,8 +58,8 @@ export function ResultsTable({
             onClick={() => handleSort(key)}
             className={`px-3 py-1 rounded-full border transition-colors ${
               sortKey === key
-                ? "border-[#F9A8B8] bg-[#FEF2F2] text-[#F9A8B8] font-semibold"
-                : "border-[#FECDD3] hover:border-[#F9A8B8] hover:bg-[#FEF2F2]"
+                ? "border-[#F9A8B8] bg-[#FFFBFB] text-[#F9A8B8] font-semibold"
+                : "border-[#FECDD3] hover:border-[#F9A8B8] hover:bg-[#FFFBFB]"
             }`}
           >
             {label}

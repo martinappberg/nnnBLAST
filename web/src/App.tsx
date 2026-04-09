@@ -372,7 +372,7 @@ function SearchPage() {
 
 function App() {
   return (
-    <div className="min-h-screen bg-[#FEF2F2]">
+    <div className="min-h-screen bg-[#FFFBFB]">
       {/* Header */}
       <header className="bg-gradient-to-r from-[#FECDD3] via-[#FBD5DC] to-[#FCE4EC] py-6 px-6 border-b border-[#F9B8C6]/40">
         <div className="max-w-5xl mx-auto flex items-center justify-between">

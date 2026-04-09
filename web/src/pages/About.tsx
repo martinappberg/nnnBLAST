@@ -186,7 +186,7 @@ export function AboutPage() {
               key={i}
               className="bg-white rounded-2xl border border-[#FECDD3] p-5 text-center space-y-2 shadow-sm hover:shadow-md transition-shadow"
             >
-              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-[#FEF2F2] text-[#F9A8B8]">
+              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-[#FFFBFB] text-[#F9A8B8]">
                 {step.icon}
               </div>
               <div className="text-xs font-bold text-[#F9A8B8] uppercase tracking-wider">
@@ -225,7 +225,7 @@ export function AboutPage() {
               {SYNTAX_TABLE.map((row, i) => (
                 <tr
                   key={i}
-                  className="border-b border-[#FECDD3] hover:bg-[#FEF2F2] transition-colors"
+                  className="border-b border-[#FECDD3] hover:bg-[#FFFBFB] transition-colors"
                 >
                   <td className="py-2 px-3 font-mono font-bold text-[#1C1917]">
                     {row.char}
@@ -312,7 +312,7 @@ export function AboutPage() {
             </code>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div className="bg-[#FEF2F2] rounded-xl p-4 space-y-2 border border-[#FECDD3]">
+            <div className="bg-[#FFFBFB] rounded-xl p-4 space-y-2 border border-[#FECDD3]">
               <div className="font-semibold text-[#F9A8B8]">Motif 1 (19bp)</div>
               <code className="text-xs font-mono block">GTGCCAGCMGCCGCGGTAA</code>
               <ul className="text-xs text-[#57534E] space-y-1">
@@ -324,7 +324,7 @@ export function AboutPage() {
                 <li>With 0 mismatches: p(S) = 2<sup>-37</sup></li>
               </ul>
             </div>
-            <div className="bg-[#FEF2F2] rounded-xl p-4 space-y-2 border border-[#FECDD3]">
+            <div className="bg-[#FFFBFB] rounded-xl p-4 space-y-2 border border-[#FECDD3]">
               <div className="font-semibold text-[#F9A8B8]">Motif 2 (20bp)</div>
               <code className="text-xs font-mono block">ATTAGAWACCCBDGTAGTCC</code>
               <ul className="text-xs text-[#57534E] space-y-1">
@@ -379,7 +379,7 @@ export function AboutPage() {
               {COMPARISON_TABLE.map((row, i) => (
                 <tr
                   key={i}
-                  className="border-b border-[#FECDD3] hover:bg-[#FEF2F2] transition-colors"
+                  className="border-b border-[#FECDD3] hover:bg-[#FFFBFB] transition-colors"
                 >
                   <td className="py-2 px-3 font-medium text-[#1C1917]">
                     {row.feature}

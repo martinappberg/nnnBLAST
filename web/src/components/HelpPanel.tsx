@@ -21,27 +21,27 @@ export function HelpPanel() {
         <div className="absolute right-0 top-8 z-10 w-[420px] p-5 bg-white rounded-2xl shadow-lg border border-[#FECDD3]/60 text-sm space-y-4 text-left">
           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-baseline">
             <h4 className="col-span-2 font-semibold text-[#1C1917] text-xs uppercase tracking-wider mb-1">Gaps</h4>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">[N:10]</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">[N:10]</code>
             <span className="text-[#57534E]">Exactly 10 nt gap</span>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">[N:5-15]</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">[N:5-15]</code>
             <span className="text-[#57534E]">5-15 nt gap (range)</span>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">N</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">N</code>
             <span className="text-[#57534E]">1 nt gap (shorthand)</span>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">NNN</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">NNN</code>
             <span className="text-[#57534E]">3 nt gap (shorthand)</span>
 
             <h4 className="col-span-2 font-semibold text-[#1C1917] text-xs uppercase tracking-wider mt-2 mb-1">In Motifs</h4>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">X</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">X</code>
             <span className="text-[#57534E]">Any base (penalized, counts as mismatch)</span>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">R Y S W K M</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">R Y S W K M</code>
             <span className="text-[#57534E]">IUPAC ambiguity (no penalty)</span>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">B D H V</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">B D H V</code>
             <span className="text-[#57534E]">3-way ambiguity (no penalty)</span>
 
             <h4 className="col-span-2 font-semibold text-[#1C1917] text-xs uppercase tracking-wider mt-2 mb-1">Mismatch Control</h4>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">{"{mm:1}"}</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">{"{mm:1}"}</code>
             <span className="text-[#57534E]">Allow 1 mismatch in this motif</span>
-            <code className="text-[#BE185D] bg-[#FEF2F2] px-1.5 py-0.5 rounded text-xs">{"{mm:0}"}</code>
+            <code className="text-[#BE185D] bg-[#FFFBFB] px-1.5 py-0.5 rounded text-xs">{"{mm:0}"}</code>
             <span className="text-[#57534E]">Require exact match</span>
           </div>
           <div className="pt-2 border-t border-[#FECDD3]/40">
