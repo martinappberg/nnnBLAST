@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Routes, Route, Link, useSearchParams } from "react-router-dom";
-import { submitSearch, getResults } from "./api";
+import { submitSearch, getResults, isServerMode } from "./api";
+import { searchWasm } from "./search";
 import { QueryVisual } from "./components/QueryVisual";
 import { ResultsTable } from "./components/ResultsTable";
 import { HelpPanel } from "./components/HelpPanel";
 import { AboutPage } from "./pages/About";
 import type { JobProgress, SearchResults } from "./types";
 import { DATABASES } from "./types";
+
+// Cloudflare Worker CORS proxy URL — set this after deploying the proxy
+const PROXY_URL = import.meta.env.VITE_PROXY_URL || "https://nnnblast-cors-proxy.workers.dev";
 
 const EXAMPLE_PRESETS = [
   {
@@ -48,7 +52,7 @@ function formatElapsed(seconds: number): string {
 
 function SearchPage() {
   const [searchParams] = useSearchParams();
-  const initialQuery = searchParams.get("query") || EXAMPLE_PRESETS[0].query;
+  const initialQuery = searchParams.get("query") || "";
 
   const [query, setQuery] = useState(initialQuery);
   const [database, setDatabase] = useState("core_nt");
@@ -106,7 +110,7 @@ function SearchPage() {
     const longestMotif = Math.max(...motifs.map((m) => m.length));
     if (longestMotif < 15) {
       warnings.push(
-        `Longest motif is only ${longestMotif}bp. NCBI BLAST requires at least ~15bp for reliable results. Consider using longer conserved regions.`
+        `Longest motif is only ${longestMotif}bp. At least one motif should be ~15bp+ for NCBI BLAST to anchor on.`
       );
     }
     for (let i = 0; i < motifs.length; i++) {
@@ -141,38 +145,58 @@ function SearchPage() {
     setPollCount(0);
 
     try {
-      const { job_id } = await submitSearch({
-        query,
-        database,
-        email,
-        api_key: apiKey || undefined,
-        max_mismatches: 2,
-        evalue_cutoff: evalCutoff,
-      });
+      if (isServerMode()) {
+        // Server mode: use Rust backend API
+        const { job_id } = await submitSearch({
+          query,
+          database,
+          email,
+          api_key: apiKey || undefined,
+          max_mismatches: 2,
+          evalue_cutoff: evalCutoff,
+        });
 
-      const poll = async () => {
-        try {
-          const res = await getResults(job_id);
-          if (res.status === "complete") {
-            setResults(res.results!);
+        const poll = async () => {
+          try {
+            const res = await getResults(job_id);
+            if (res.status === "complete") {
+              setResults(res.results!);
+              setProgress(null);
+              setLoading(false);
+            } else if (res.status === "failed") {
+              setError(res.error ?? "Search failed");
+              setProgress(null);
+              setLoading(false);
+            } else {
+              if (res.progress) setProgress(res.progress);
+              setPollCount((c) => c + 1);
+              pollRef.current = window.setTimeout(poll, 2000);
+            }
+          } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : String(e));
             setProgress(null);
             setLoading(false);
-          } else if (res.status === "failed") {
-            setError(res.error ?? "Search failed");
-            setProgress(null);
-            setLoading(false);
-          } else {
-            if (res.progress) setProgress(res.progress);
-            setPollCount((c) => c + 1);
-            pollRef.current = window.setTimeout(poll, 2000);
           }
-        } catch (e: unknown) {
-          setError(e instanceof Error ? e.message : String(e));
-          setProgress(null);
-          setLoading(false);
-        }
-      };
-      poll();
+        };
+        poll();
+      } else {
+        // WASM mode: run entirely in browser via Cloudflare proxy
+        const results = await searchWasm({
+          query,
+          database,
+          email,
+          apiKey: apiKey || undefined,
+          evalCutoff,
+          proxyUrl: PROXY_URL,
+          onProgress: (stage, detail) => {
+            setProgress({ stage, detail: detail ?? undefined });
+            setPollCount((c) => c + 1);
+          },
+        });
+        setResults(results);
+        setProgress(null);
+        setLoading(false);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
       setProgress(null);
@@ -231,9 +255,9 @@ function SearchPage() {
         )}
 
         <p className="text-xs text-[#A8A29E]">
-          Each motif must be at least ~15bp for NCBI BLAST. Use IUPAC codes (R,
-          Y, M, K, S, W, B, D, H, V) for ambiguity. X = any base (penalized). N
-          = gap shorthand (N = [N:1]).
+          At least one motif should be ~15bp+ for NCBI BLAST. Shorter motifs work as flanking
+          constraints. IUPAC codes (R, Y, M, K, S, W, B, D, H, V) for ambiguity. X = any base
+          (penalized). N = gap shorthand.
         </p>
       </section>
 

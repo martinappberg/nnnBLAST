@@ -9,4 +9,8 @@ export default defineConfig({
       '/api': 'http://localhost:3001',
     },
   },
+  // Support WASM imports
+  optimizeDeps: {
+    exclude: ['nnnblast-wasm'],
+  },
 })

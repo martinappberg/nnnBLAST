@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "server")]
 use std::sync::Arc;
+#[cfg(feature = "server")]
 use tokio::sync::RwLock;
 
 /// A single motif in the structured query (e.g., "AGGAGG" or "ATCGATCG").
@@ -144,6 +147,7 @@ pub struct SearchResults {
 }
 
 /// Shared progress handle for updating job status from async pipeline.
+#[cfg(feature = "server")]
 pub type ProgressHandle = Arc<RwLock<JobProgress>>;
 
 // ─── IUPAC helpers ───
