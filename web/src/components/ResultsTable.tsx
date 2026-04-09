@@ -32,15 +32,40 @@ export function ResultsTable({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-[#1C1917]">
           Results: {results.hits.length} hit
           {results.hits.length !== 1 ? "s" : ""}
         </h3>
         <span className="text-sm text-[#A8A29E]">
-          Database: {results.num_sequences} sequences,{" "}
+          Database: {results.num_sequences.toLocaleString()} sequences,{" "}
           {results.database_size.toLocaleString()} bp
         </span>
+      </div>
+
+      {/* Sort controls */}
+      <div className="flex items-center gap-2 mb-4 text-xs text-[#57534E]">
+        <span className="text-[#A8A29E]">Sort by:</span>
+        {(
+          [
+            ["evalue", "E-value"],
+            ["total_score", "Score"],
+            ["bit_score", "Bit Score"],
+          ] as [SortKey, string][]
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => handleSort(key)}
+            className={`px-3 py-1 rounded-full border transition-colors ${
+              sortKey === key
+                ? "border-[#B4637A] bg-[#FFF0F3] text-[#B4637A] font-semibold"
+                : "border-[#F0DDE3] hover:border-[#B4637A] hover:bg-[#FFF0F3]"
+            }`}
+          >
+            {label}
+            {arrow(key)}
+          </button>
+        ))}
       </div>
 
       {results.hits.length === 0 ? (
@@ -48,54 +73,26 @@ export function ResultsTable({
           No hits found. Try relaxing mismatch or E-value constraints.
         </div>
       ) : (
-        <table className="w-full text-sm border-collapse">
-          <thead>
-            <tr className="border-b-2 border-[#F0DDE3] text-left">
-              <th className="py-2 px-2 text-[#57534E]">#</th>
-              <th className="py-2 px-2 text-[#57534E]">Subject</th>
-              <th className="py-2 px-2 text-[#57534E]">Strand</th>
-              <th
-                className="py-2 px-2 cursor-pointer hover:text-[#B4637A] text-[#57534E] transition-colors"
-                onClick={() => handleSort("total_score")}
-              >
-                Score{arrow("total_score")}
-              </th>
-              <th
-                className="py-2 px-2 cursor-pointer hover:text-[#B4637A] text-[#57534E] transition-colors"
-                onClick={() => handleSort("evalue")}
-              >
-                E-value{arrow("evalue")}
-              </th>
-              <th
-                className="py-2 px-2 cursor-pointer hover:text-[#B4637A] text-[#57534E] transition-colors"
-                onClick={() => handleSort("bit_score")}
-              >
-                Bit Score{arrow("bit_score")}
-              </th>
-              <th className="py-2 px-2 text-[#57534E]">Motifs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((hit, idx) => (
-              <HitRow
-                key={idx}
-                hit={hit}
-                idx={idx}
-                expanded={expandedIdx === idx}
-                onToggle={() =>
-                  setExpandedIdx(expandedIdx === idx ? null : idx)
-                }
-                queryMotifs={queryMotifs}
-              />
-            ))}
-          </tbody>
-        </table>
+        <div className="space-y-3">
+          {sorted.map((hit, idx) => (
+            <HitCard
+              key={idx}
+              hit={hit}
+              idx={idx}
+              expanded={expandedIdx === idx}
+              onToggle={() =>
+                setExpandedIdx(expandedIdx === idx ? null : idx)
+              }
+              queryMotifs={queryMotifs}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-function HitRow({
+function HitCard({
   hit,
   idx,
   expanded,
@@ -108,34 +105,115 @@ function HitRow({
   onToggle: () => void;
   queryMotifs: string[];
 }) {
+  const description = hit.description || hit.subject_id;
+  const ncbiUrl = `https://www.ncbi.nlm.nih.gov/nuccore/${hit.subject_id}`;
+
   return (
-    <>
-      <tr
-        className="border-b border-[#F0DDE3] hover:bg-[#FFF0F3] cursor-pointer transition-colors"
+    <div
+      className={`bg-white rounded-xl border transition-colors ${
+        expanded
+          ? "border-[#B4637A] shadow-md"
+          : "border-[#F0DDE3] hover:border-[#B4637A]/50 shadow-sm"
+      }`}
+    >
+      {/* Card header — clickable */}
+      <div
+        className="p-4 cursor-pointer select-none"
         onClick={onToggle}
       >
-        <td className="py-2 px-2 text-[#A8A29E]">{idx + 1}</td>
-        <td className="py-2 px-2 font-mono font-semibold text-[#1C1917]">
-          {hit.subject_id}
-        </td>
-        <td className="py-2 px-2 text-center text-[#57534E]">{hit.strand}</td>
-        <td className="py-2 px-2 text-[#57534E]">{hit.total_score}</td>
-        <td className="py-2 px-2 text-[#57534E]">{formatEvalue(hit.evalue)}</td>
-        <td className="py-2 px-2 text-[#57534E]">{hit.bit_score.toFixed(1)}</td>
-        <td className="py-2 px-2 text-[#A8A29E]">
-          {hit.motif_alignments
-            .map((ma) => `${ma.mismatches}mm`)
-            .join(", ")}
-        </td>
-      </tr>
+        {/* Row 1: rank + description */}
+        <div className="flex items-start gap-3">
+          <span className="text-xs text-[#A8A29E] font-mono mt-0.5 shrink-0">
+            #{idx + 1}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h4
+              className="text-sm font-semibold text-[#1C1917] leading-snug truncate"
+              title={description}
+            >
+              {description}
+            </h4>
+
+            {/* Row 2: accession + strand + subject length */}
+            <div className="flex items-center gap-3 mt-1 text-xs">
+              <a
+                href={ncbiUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-[#B4637A] hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {hit.subject_id}
+              </a>
+              <span
+                className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  hit.strand === "plus"
+                    ? "bg-[#56949F]/10 text-[#56949F]"
+                    : "bg-[#D7827E]/10 text-[#D7827E]"
+                }`}
+              >
+                {hit.strand === "plus" ? "+" : "\u2212"} strand
+              </span>
+              {hit.subject_length > 0 && (
+                <span className="text-[#A8A29E]">
+                  {hit.subject_length.toLocaleString()} bp
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Expand/collapse chevron */}
+          <span className="text-[#A8A29E] shrink-0 mt-1 text-sm">
+            {expanded ? "\u25B2" : "\u25BC"}
+          </span>
+        </div>
+
+        {/* Row 3: stats + motif pills */}
+        <div className="flex items-center flex-wrap gap-x-4 gap-y-2 mt-3 ml-7">
+          {/* Stats */}
+          <div className="flex items-center gap-3 text-xs text-[#57534E]">
+            <span>
+              <span className="text-[#A8A29E]">E-value</span>{" "}
+              <span className="font-semibold">{formatEvalue(hit.evalue)}</span>
+            </span>
+            <span className="text-[#F0DDE3]">|</span>
+            <span>
+              <span className="text-[#A8A29E]">Score</span>{" "}
+              <span className="font-semibold">{hit.total_score}</span>
+            </span>
+            <span className="text-[#F0DDE3]">|</span>
+            <span>
+              <span className="text-[#A8A29E]">Bit</span>{" "}
+              <span className="font-semibold">{hit.bit_score.toFixed(1)}</span>
+            </span>
+          </div>
+
+          {/* Motif pills */}
+          <div className="flex items-center gap-1.5">
+            {hit.motif_alignments.map((ma, i) => (
+              <span
+                key={i}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                  ma.mismatches === 0
+                    ? "bg-[#56949F]/10 border-[#56949F]/30 text-[#56949F]"
+                    : "bg-[#D7827E]/10 border-[#D7827E]/30 text-[#D7827E]"
+                }`}
+              >
+                M{ma.motif_index + 1}
+                <span className="font-bold">{ma.mismatches}mm</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Expanded alignment details */}
       {expanded && (
-        <tr>
-          <td colSpan={7} className="p-3">
-            <AlignmentView hit={hit} queryMotifs={queryMotifs} />
-          </td>
-        </tr>
+        <div className="border-t border-[#F0DDE3] p-4">
+          <AlignmentView hit={hit} queryMotifs={queryMotifs} />
+        </div>
       )}
-    </>
+    </div>
   );
 }
 

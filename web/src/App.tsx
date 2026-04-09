@@ -54,7 +54,6 @@ function SearchPage() {
   const [database, setDatabase] = useState("core_nt");
   const [email, setEmail] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [maxMm, setMaxMm] = useState(2);
   const [evalCutoff, setEvalCutoff] = useState(10);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +146,7 @@ function SearchPage() {
         database,
         email,
         api_key: apiKey || undefined,
-        max_mismatches: maxMm,
+        max_mismatches: 2,
         evalue_cutoff: evalCutoff,
       });
 
@@ -179,7 +178,7 @@ function SearchPage() {
       setProgress(null);
       setLoading(false);
     }
-  }, [query, database, email, apiKey, maxMm, evalCutoff]);
+  }, [query, database, email, apiKey, evalCutoff]);
 
   return (
     <main className="max-w-5xl mx-auto px-6 py-8 space-y-6">
@@ -260,24 +259,6 @@ function SearchPage() {
                 </option>
               ))}
             </select>
-          </div>
-
-          {/* Max mismatches */}
-          <div>
-            <label className="block text-xs font-medium text-[#57534E] mb-1">
-              Max mismatches (global)
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="range"
-                min={0}
-                max={5}
-                value={maxMm}
-                onChange={(e) => setMaxMm(Number(e.target.value))}
-                className="flex-1 accent-[#B4637A]"
-              />
-              <span className="text-sm font-mono w-4 text-center">{maxMm}</span>
-            </div>
           </div>
 
           {/* E-value cutoff */}

@@ -207,7 +207,9 @@ fn parse_blast_xml(xml: &str) -> Result<(Vec<BlastHit>, usize), NcbiError> {
     let mut in_hit = false;
     let mut in_hsp = false;
     let mut current_accession = String::new();
-    let mut pending_tag = String::new(); // the last <Start> tag name
+    let mut current_description = String::new();
+    let mut current_hit_len: usize = 0;
+    let mut pending_tag = String::new();
 
     let mut hsp_hit_from: usize = 0;
     let mut hsp_hit_to: usize = 0;
@@ -224,6 +226,8 @@ fn parse_blast_xml(xml: &str) -> Result<(Vec<BlastHit>, usize), NcbiError> {
                     "Hit" => {
                         in_hit = true;
                         current_accession.clear();
+                        current_description.clear();
+                        current_hit_len = 0;
                     }
                     "Hsp" => {
                         in_hsp = true;
@@ -254,6 +258,8 @@ fn parse_blast_xml(xml: &str) -> Result<(Vec<BlastHit>, usize), NcbiError> {
                             };
                             hits.push(BlastHit {
                                 accession: current_accession.clone(),
+                                description: current_description.clone(),
+                                subject_length: current_hit_len,
                                 hit_from: from,
                                 hit_to: to,
                                 strand,
@@ -280,6 +286,12 @@ fn parse_blast_xml(xml: &str) -> Result<(Vec<BlastHit>, usize), NcbiError> {
                 match pending_tag.as_str() {
                     "Hit_accession" | "accession" if in_hit && !in_hsp => {
                         current_accession = text;
+                    }
+                    "Hit_def" if in_hit && !in_hsp => {
+                        current_description = text;
+                    }
+                    "Hit_len" if in_hit && !in_hsp => {
+                        current_hit_len = text.parse().unwrap_or(0);
                     }
                     "Hsp_hit-from" if in_hsp => {
                         hsp_hit_from = text.parse().unwrap_or(0);

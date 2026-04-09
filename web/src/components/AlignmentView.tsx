@@ -1,5 +1,36 @@
 import type { Hit, MotifAlignment } from "../types";
 
+/** IUPAC ambiguity code matching — mirrors the Rust iupac_match function. */
+function iupacMatch(queryBase: string, subjectBase: string): boolean {
+  const q = queryBase.toUpperCase();
+  const s = subjectBase.toUpperCase();
+  const map: Record<string, string> = {
+    A: "A",
+    T: "T",
+    G: "G",
+    C: "C",
+    R: "AG",
+    Y: "CT",
+    S: "GC",
+    W: "AT",
+    K: "GT",
+    M: "AC",
+    B: "CGT",
+    D: "AGT",
+    H: "ACT",
+    V: "ACG",
+    N: "ACGT",
+  };
+  if (q === "X") return false; // X always mismatches
+  const allowed = map[q];
+  return allowed ? allowed.includes(s) : q === s;
+}
+
+/** Check if a query base is an X (wildcard) position */
+function isWildcardX(qBase: string): boolean {
+  return qBase.toUpperCase() === "X";
+}
+
 /** Expandable alignment view for a single hit, showing each motif aligned against the subject. */
 export function AlignmentView({
   hit,
@@ -13,11 +44,14 @@ export function AlignmentView({
   );
 
   return (
-    <div className="bg-[#FFF8F6] rounded-xl p-3 text-xs font-mono overflow-x-auto space-y-2 border border-[#F0DDE3]">
+    <div className="bg-[#FAF0F0] rounded-xl p-4 text-xs font-mono overflow-x-auto space-y-3 border border-[#F0DDE3]">
       <div className="text-[#57534E] text-xs font-sans mb-1">
-        Subject: <span className="font-bold text-[#1C1917]">{hit.subject_id}</span>{" "}
-        | Strand: <span className="font-bold text-[#1C1917]">{hit.strand}</span>{" "}
-        | Score: <span className="font-bold text-[#1C1917]">{hit.total_score}</span>
+        Genomic region:{" "}
+        <span className="font-semibold text-[#1C1917]">
+          {hit.genomic_start.toLocaleString()}&ndash;{hit.genomic_end.toLocaleString()}
+        </span>
+        <span className="mx-2 text-[#A8A29E]">|</span>
+        Strand: <span className="font-semibold text-[#1C1917]">{hit.strand}</span>
       </div>
       {sortedAlns.map((aln, i) => (
         <MotifAlignmentRow
@@ -35,11 +69,6 @@ export function AlignmentView({
       ))}
     </div>
   );
-}
-
-/** Check if a query base is an X (wildcard) position */
-function isWildcardX(qBase: string): boolean {
-  return qBase.toUpperCase() === "X";
 }
 
 function MotifAlignmentRow({
@@ -70,9 +99,8 @@ function MotifAlignmentRow({
           {querySeq.split("").map((qBase, j) => {
             const sBase = subjectStr[j] ?? " ";
             const isX = isWildcardX(qBase);
-            const isMatch = qBase.toUpperCase() === sBase.toUpperCase();
+            const isMatch = iupacMatch(qBase, sBase);
             if (isX) {
-              // X positions: show ~ in a distinct color (not a real mismatch)
               return (
                 <span key={j} className="text-[#D7827E] opacity-70">
                   ~
@@ -100,7 +128,7 @@ function MotifAlignmentRow({
           {subjectStr.split("").map((sBase, j) => {
             const qBase = querySeq[j] ?? "";
             const isX = isWildcardX(qBase);
-            const isMatch = qBase.toUpperCase() === sBase.toUpperCase();
+            const isMatch = iupacMatch(qBase, sBase);
             if (isX) {
               return (
                 <span key={j} className="text-[#D7827E] opacity-70">

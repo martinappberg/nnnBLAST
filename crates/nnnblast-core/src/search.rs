@@ -263,6 +263,8 @@ pub async fn search_ncbi(
             let sem = semaphore.clone();
             let client = client.clone();
             let accession = blast_hit.accession.clone();
+            let description = blast_hit.description.clone();
+            let subject_length = blast_hit.subject_length;
             let strand = blast_hit.strand;
             let fetch_start = blast_hit.hit_from.saturating_sub(padding).max(1);
             let fetch_end = blast_hit.hit_to + padding;
@@ -313,6 +315,8 @@ pub async fn search_ncbi(
                 for hit in &mut region_hits {
                     hit.genomic_start = fetch_start;
                     hit.genomic_end = fetch_end;
+                    hit.description = description.clone();
+                    hit.subject_length = subject_length;
                 }
 
                 region_hits
@@ -580,6 +584,8 @@ pub fn extend_from_anchor(
 
     Some(Hit {
         subject_id: subject_id.to_string(),
+        description: String::new(), // filled in by caller for NCBI mode
+        subject_length: 0,
         strand,
         motif_alignments,
         total_score,

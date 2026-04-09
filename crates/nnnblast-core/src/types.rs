@@ -73,6 +73,10 @@ fn default_max_blast_hits() -> usize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlastHit {
     pub accession: String,
+    /// Full description from BLAST (organism, sequence type, etc.)
+    pub description: String,
+    /// Total length of the subject sequence.
+    pub subject_length: usize,
     /// 1-based start on plus strand.
     pub hit_from: usize,
     /// 1-based end on plus strand.
@@ -104,6 +108,12 @@ pub struct MotifAlignment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hit {
     pub subject_id: String,
+    /// Full description (organism, sequence type, etc.)
+    #[serde(default)]
+    pub description: String,
+    /// Total length of the subject sequence.
+    #[serde(default)]
+    pub subject_length: usize,
     pub strand: char,
     pub motif_alignments: Vec<MotifAlignment>,
     pub total_score: i32,

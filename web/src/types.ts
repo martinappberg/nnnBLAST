@@ -8,6 +8,8 @@ export interface MotifAlignment {
 
 export interface Hit {
   subject_id: string;
+  description: string;
+  subject_length: number;
   strand: string;
   motif_alignments: MotifAlignment[];
   total_score: number;
@@ -41,7 +43,7 @@ export interface SearchRequest {
   database: string;
   email: string;
   api_key?: string;
-  max_mismatches: number;
+  max_mismatches?: number;
   evalue_cutoff: number;
 }
 
