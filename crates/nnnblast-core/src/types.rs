@@ -138,7 +138,11 @@ pub type ProgressHandle = Arc<RwLock<JobProgress>>;
 
 // ─── IUPAC helpers ───
 
-/// Check if a base matches an IUPAC code. Handles both DNA (T) and RNA (U).
+/// Check if a query base matches a subject base under IUPAC rules.
+///
+/// - Standard IUPAC codes (R, Y, M, etc.): match compatible bases, scored as match (+2)
+/// - X: ALWAYS returns false (penalized wildcard — always counts as mismatch)
+/// - N: should not appear in motifs (parser converts standalone N to gaps)
 pub fn iupac_match(query_base: u8, subject_base: u8) -> bool {
     let q = normalize_base(query_base);
     let s = normalize_base(subject_base);
@@ -157,7 +161,8 @@ pub fn iupac_match(query_base: u8, subject_base: u8) -> bool {
         b'D' => s != b'C',
         b'H' => s != b'G',
         b'V' => s != b'T',
-        b'N' => true,
+        b'N' => true,  // legacy: if N somehow appears in a motif, treat as any-base
+        b'X' => false,  // X = penalized wildcard, ALWAYS a mismatch
         _ => false,
     }
 }
@@ -176,7 +181,7 @@ pub fn iupac_degeneracy(base: u8) -> usize {
         b'A' | b'T' | b'G' | b'C' => 1,
         b'R' | b'Y' | b'S' | b'W' | b'K' | b'M' => 2,
         b'B' | b'D' | b'H' | b'V' => 3,
-        b'N' => 4,
+        b'N' | b'X' => 4,
         _ => 4,
     }
 }
@@ -190,7 +195,7 @@ pub fn motif_information_content(motif: &Motif) -> f64 {
         .sum()
 }
 
-/// Reverse complement of a DNA/RNA sequence. U is treated as T.
+/// Reverse complement of a DNA/RNA sequence. U is treated as T. X stays as X.
 pub fn reverse_complement(seq: &[u8]) -> Vec<u8> {
     seq.iter()
         .rev()
@@ -210,6 +215,7 @@ pub fn reverse_complement(seq: &[u8]) -> Vec<u8> {
             b'D' => b'H',
             b'H' => b'D',
             b'N' => b'N',
+            b'X' => b'X', // penalized wildcard has no complement
             _ => b'N',
         })
         .collect()

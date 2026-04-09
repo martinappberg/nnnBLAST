@@ -28,49 +28,51 @@ export function ResultsTable({
   };
 
   const arrow = (key: string) =>
-    key === sortKey ? (sortAsc ? " \u25b2" : " \u25bc") : "";
+    key === sortKey ? (sortAsc ? " \u25B2" : " \u25BC") : "";
 
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-lg font-semibold">
-          Results: {results.hits.length} hit{results.hits.length !== 1 ? "s" : ""}
+        <h3 className="text-lg font-semibold text-[#1C1917]">
+          Results: {results.hits.length} hit
+          {results.hits.length !== 1 ? "s" : ""}
         </h3>
-        <span className="text-sm text-gray-500">
-          Database: {results.num_sequences} sequences, {results.database_size.toLocaleString()} bp
+        <span className="text-sm text-[#A8A29E]">
+          Database: {results.num_sequences} sequences,{" "}
+          {results.database_size.toLocaleString()} bp
         </span>
       </div>
 
       {results.hits.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
+        <div className="text-center py-8 text-[#A8A29E]">
           No hits found. Try relaxing mismatch or E-value constraints.
         </div>
       ) : (
         <table className="w-full text-sm border-collapse">
           <thead>
-            <tr className="border-b-2 border-gray-300 text-left">
-              <th className="py-2 px-2">#</th>
-              <th className="py-2 px-2">Subject</th>
-              <th className="py-2 px-2">Strand</th>
+            <tr className="border-b-2 border-[#F0DDE3] text-left">
+              <th className="py-2 px-2 text-[#57534E]">#</th>
+              <th className="py-2 px-2 text-[#57534E]">Subject</th>
+              <th className="py-2 px-2 text-[#57534E]">Strand</th>
               <th
-                className="py-2 px-2 cursor-pointer hover:text-blue-600"
+                className="py-2 px-2 cursor-pointer hover:text-[#B4637A] text-[#57534E] transition-colors"
                 onClick={() => handleSort("total_score")}
               >
                 Score{arrow("total_score")}
               </th>
               <th
-                className="py-2 px-2 cursor-pointer hover:text-blue-600"
+                className="py-2 px-2 cursor-pointer hover:text-[#B4637A] text-[#57534E] transition-colors"
                 onClick={() => handleSort("evalue")}
               >
                 E-value{arrow("evalue")}
               </th>
               <th
-                className="py-2 px-2 cursor-pointer hover:text-blue-600"
+                className="py-2 px-2 cursor-pointer hover:text-[#B4637A] text-[#57534E] transition-colors"
                 onClick={() => handleSort("bit_score")}
               >
                 Bit Score{arrow("bit_score")}
               </th>
-              <th className="py-2 px-2">Motifs</th>
+              <th className="py-2 px-2 text-[#57534E]">Motifs</th>
             </tr>
           </thead>
           <tbody>
@@ -109,16 +111,18 @@ function HitRow({
   return (
     <>
       <tr
-        className="border-b border-gray-200 hover:bg-blue-50 cursor-pointer"
+        className="border-b border-[#F0DDE3] hover:bg-[#FFF0F3] cursor-pointer transition-colors"
         onClick={onToggle}
       >
-        <td className="py-2 px-2 text-gray-500">{idx + 1}</td>
-        <td className="py-2 px-2 font-mono font-semibold">{hit.subject_id}</td>
-        <td className="py-2 px-2 text-center">{hit.strand}</td>
-        <td className="py-2 px-2">{hit.total_score}</td>
-        <td className="py-2 px-2">{formatEvalue(hit.evalue)}</td>
-        <td className="py-2 px-2">{hit.bit_score.toFixed(1)}</td>
-        <td className="py-2 px-2 text-gray-500">
+        <td className="py-2 px-2 text-[#A8A29E]">{idx + 1}</td>
+        <td className="py-2 px-2 font-mono font-semibold text-[#1C1917]">
+          {hit.subject_id}
+        </td>
+        <td className="py-2 px-2 text-center text-[#57534E]">{hit.strand}</td>
+        <td className="py-2 px-2 text-[#57534E]">{hit.total_score}</td>
+        <td className="py-2 px-2 text-[#57534E]">{formatEvalue(hit.evalue)}</td>
+        <td className="py-2 px-2 text-[#57534E]">{hit.bit_score.toFixed(1)}</td>
+        <td className="py-2 px-2 text-[#A8A29E]">
           {hit.motif_alignments
             .map((ma) => `${ma.mismatches}mm`)
             .join(", ")}

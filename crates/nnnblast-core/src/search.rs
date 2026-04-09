@@ -20,7 +20,8 @@ fn build_composite_query(query: &crate::types::StructuredQuery) -> (String, usiz
         if i == anchor_idx {
             anchor_offset = composite.len();
         }
-        let motif_str: String = motif.sequence.iter().map(|&b| b as char).collect();
+        // X→N for BLAST
+        let motif_str = crate::query::motif_to_blast_query(&motif.sequence);
         composite.push_str(&motif_str);
         if i < query.gaps.len() {
             // Insert N's for minimum gap
@@ -45,11 +46,8 @@ enum BlastStrategy {
 fn choose_blast_strategy(query: &crate::types::StructuredQuery) -> BlastStrategy {
     let anchor_idx = select_anchor(query);
     let anchor_len = query.motifs[anchor_idx].sequence.len();
-    let anchor_seq: String = query.motifs[anchor_idx]
-        .sequence
-        .iter()
-        .map(|&b| b as char)
-        .collect();
+    // Convert X→N for BLAST submission
+    let anchor_seq = crate::query::motif_to_blast_query(&query.motifs[anchor_idx].sequence);
 
     // Case 1: Anchor is long enough on its own (>= 18bp)
     if anchor_len >= 18 {
@@ -83,7 +81,7 @@ fn choose_blast_strategy(query: &crate::types::StructuredQuery) -> BlastStrategy
             .enumerate()
             .filter(|(_, m)| m.sequence.len() >= 7) // skip motifs too short even for BLAST
             .map(|(i, m)| {
-                let seq: String = m.sequence.iter().map(|&b| b as char).collect();
+                let seq = crate::query::motif_to_blast_query(&m.sequence);
                 (i, seq)
             })
             .collect();
@@ -245,84 +243,91 @@ pub async fn search_ncbi(
     let padding = total_query_span + 50;
 
     let total_candidates = candidates.len();
-    let mut structured_hits: Vec<Hit> = Vec::new();
 
+    // Concurrent Efetch with semaphore for rate limiting
+    // NCBI allows 3 req/s without API key, 10 with
+    let max_concurrent: usize = if ncbi_params.api_key.is_some() { 8 } else { 3 };
     let delay = if ncbi_params.api_key.is_some() {
         std::time::Duration::from_millis(100)
     } else {
         std::time::Duration::from_millis(350)
     };
 
-    for (i, blast_hit) in candidates.iter().enumerate() {
-        update_progress(
-            &progress,
-            "fetching_regions",
-            Some(format!("{}/{}", i + 1, total_candidates)),
-        )
-        .await;
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max_concurrent));
+    let completed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-        // Fetch a wide region around the BLAST hit
-        let fetch_start = blast_hit.hit_from.saturating_sub(padding).max(1);
-        let fetch_end = blast_hit.hit_to + padding;
+    // Spawn all fetch+scan tasks concurrently
+    let fetch_tasks: Vec<_> = candidates
+        .iter()
+        .map(|blast_hit| {
+            let sem = semaphore.clone();
+            let client = client.clone();
+            let accession = blast_hit.accession.clone();
+            let strand = blast_hit.strand;
+            let fetch_start = blast_hit.hit_from.saturating_sub(padding).max(1);
+            let fetch_end = blast_hit.hit_to + padding;
+            let api_key = ncbi_params.api_key.clone();
+            let params = params.clone();
+            let anchor_idx = anchor_idx;
+            let completed = completed.clone();
+            let progress = progress.clone();
+            let total = total_candidates;
 
-        let region = match ncbi::fetch_region(
-            &client,
-            &blast_hit.accession,
-            fetch_start,
-            fetch_end,
-            ncbi_params.api_key.as_deref(),
-        )
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to fetch region for {}: {}",
-                    blast_hit.accession,
-                    e
-                );
-                tokio::time::sleep(delay).await;
-                continue;
-            }
-        };
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
 
-        tracing::info!(
-            "  Fetched {} bp for {} ({}..{})",
-            region.len(),
-            blast_hit.accession,
-            fetch_start,
-            fetch_end
-        );
-        if region.len() < 50 {
-            tracing::warn!("  Region too short, skipping");
-            tokio::time::sleep(delay).await;
-            continue;
+                let region = match ncbi::fetch_region(
+                    &client,
+                    &accession,
+                    fetch_start,
+                    fetch_end,
+                    api_key.as_deref(),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("Failed to fetch {}: {}", accession, e);
+                        let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        update_progress(&progress, "fetching_regions", Some(format!("{}/{}", done, total))).await;
+                        tokio::time::sleep(delay).await;
+                        return vec![];
+                    }
+                };
+
+                tokio::time::sleep(delay).await; // rate limit
+
+                let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                update_progress(&progress, "fetching_regions", Some(format!("{}/{}", done, total))).await;
+
+                if region.len() < 50 {
+                    return vec![];
+                }
+
+                // Local scan (both strands)
+                let mut region_hits =
+                    search_strand(&accession, &region, '+', &params, anchor_idx);
+                let rc = reverse_complement(&region);
+                region_hits.extend(search_strand(&accession, &rc, '-', &params, anchor_idx));
+
+                for hit in &mut region_hits {
+                    hit.genomic_start = fetch_start;
+                    hit.genomic_end = fetch_end;
+                }
+
+                region_hits
+            })
+        })
+        .collect();
+
+    // Await all tasks and collect results
+    let all_results = futures::future::join_all(fetch_tasks).await;
+    let mut structured_hits: Vec<Hit> = Vec::new();
+    for result in all_results {
+        match result {
+            Ok(hits) => structured_hits.extend(hits),
+            Err(e) => tracing::warn!("Task failed: {}", e),
         }
-
-        // Scan the fetched region for the full structured pattern
-        let mut region_hits =
-            search_strand(&blast_hit.accession, &region, '+', params, anchor_idx);
-        let rc = reverse_complement(&region);
-        region_hits.extend(search_strand(
-            &blast_hit.accession,
-            &rc,
-            '-',
-            params,
-            anchor_idx,
-        ));
-
-        tracing::info!(
-            "  Local scan found {} structured hits in region",
-            region_hits.len()
-        );
-
-        for mut hit in region_hits {
-            hit.genomic_start = fetch_start;
-            hit.genomic_end = fetch_end;
-            structured_hits.push(hit);
-        }
-
-        tokio::time::sleep(delay).await;
     }
 
     // Step 5: Score, deduplicate, rank

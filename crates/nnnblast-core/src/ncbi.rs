@@ -21,7 +21,7 @@ pub enum NcbiError {
 
 const BLAST_URL: &str = "https://blast.ncbi.nlm.nih.gov/blast/Blast.cgi";
 const EFETCH_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi";
-const POLL_INTERVAL: Duration = Duration::from_secs(15);
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
 const BLAST_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
 
 /// Submit a BLAST query to NCBI. Returns the RID (Request Identifier).

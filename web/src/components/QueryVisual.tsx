@@ -10,27 +10,65 @@ export function QueryVisual({ query }: { query: string }) {
           return (
             <div
               key={i}
-              className="px-2 py-1 rounded font-mono text-sm font-bold text-white shrink-0"
-              style={{ backgroundColor: COLORS[part.colorIdx % COLORS.length] }}
-              title={part.mm !== undefined ? `max ${part.mm} mismatches` : undefined}
+              className="px-2 py-1 rounded-lg font-mono text-sm font-bold text-white shrink-0"
+              style={{
+                backgroundColor: COLORS[part.colorIdx % COLORS.length],
+              }}
+              title={
+                part.mm !== undefined
+                  ? `max ${part.mm} mismatches`
+                  : undefined
+              }
             >
-              {part.text}
+              {part.text.split("").map((ch, j) => {
+                if (ch === "X") {
+                  return (
+                    <span
+                      key={j}
+                      className="opacity-70"
+                      style={{
+                        textDecoration: "underline dotted",
+                        textUnderlineOffset: "3px",
+                      }}
+                    >
+                      X
+                    </span>
+                  );
+                }
+                return <span key={j}>{ch}</span>;
+              })}
               {part.mm !== undefined && (
                 <span className="ml-1 text-xs opacity-75">({part.mm}mm)</span>
               )}
             </div>
           );
         }
+        if (part.type === "inline_gap") {
+          return (
+            <div
+              key={i}
+              className="flex items-center gap-0.5 text-xs text-[#A8A29E] shrink-0"
+            >
+              <div className="border-t-2 border-dashed border-[#B4637A]/40 w-4" />
+              <span className="font-mono whitespace-nowrap text-[#B4637A]/60">
+                {part.count}
+              </span>
+              <div className="border-t-2 border-dashed border-[#B4637A]/40 w-4" />
+            </div>
+          );
+        }
         return (
           <div
             key={i}
-            className="flex items-center gap-1 text-xs text-gray-500 shrink-0"
+            className="flex items-center gap-1 text-xs text-[#A8A29E] shrink-0"
           >
-            <div className="border-t-2 border-dashed border-gray-400 w-6" />
-            <span className="font-mono whitespace-nowrap">
-              {part.min === part.max ? `${part.min}` : `${part.min}-${part.max}`}
+            <div className="border-t-2 border-dashed border-[#B4637A]/40 w-6" />
+            <span className="font-mono whitespace-nowrap text-[#57534E]">
+              {part.min === part.max
+                ? `${part.min}`
+                : `${part.min}-${part.max}`}
             </span>
-            <div className="border-t-2 border-dashed border-gray-400 w-6" />
+            <div className="border-t-2 border-dashed border-[#B4637A]/40 w-6" />
           </div>
         );
       })}
@@ -38,11 +76,19 @@ export function QueryVisual({ query }: { query: string }) {
   );
 }
 
-const COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#db2777"];
+const COLORS = [
+  "#B4637A",
+  "#56949F",
+  "#D7827E",
+  "#907AA9",
+  "#EA9D34",
+  "#286983",
+];
 
 type VisualPart =
   | { type: "motif"; text: string; mm?: number; colorIdx: number }
-  | { type: "gap"; min: number; max: number };
+  | { type: "gap"; min: number; max: number }
+  | { type: "inline_gap"; count: number };
 
 function parseForVisual(query: string): VisualPart[] {
   const parts: VisualPart[] = [];
@@ -52,14 +98,22 @@ function parseForVisual(query: string): VisualPart[] {
   let currentMotif = "";
   let currentMm: number | undefined = undefined;
 
+  const flushMotif = () => {
+    if (currentMotif) {
+      parts.push({
+        type: "motif",
+        text: currentMotif,
+        mm: currentMm,
+        colorIdx: motifIdx++,
+      });
+      currentMotif = "";
+      currentMm = undefined;
+    }
+  };
+
   while (i < upper.length) {
     if (upper[i] === "[") {
-      // Flush motif
-      if (currentMotif) {
-        parts.push({ type: "motif", text: currentMotif, mm: currentMm, colorIdx: motifIdx++ });
-        currentMotif = "";
-        currentMm = undefined;
-      }
+      flushMotif();
       const close = upper.indexOf("]", i);
       if (close === -1) break;
       const gapStr = upper.slice(i + 1, close);
@@ -73,6 +127,15 @@ function parseForVisual(query: string): VisualPart[] {
       const match = mmStr.match(/MM:(\d+)/);
       if (match) currentMm = parseInt(match[1]);
       i = close + 1;
+    } else if (upper[i] === "N") {
+      // N outside brackets = gap shorthand. Count consecutive Ns.
+      let nCount = 0;
+      while (i < upper.length && upper[i] === "N") {
+        nCount++;
+        i++;
+      }
+      flushMotif();
+      parts.push({ type: "inline_gap", count: nCount });
     } else if (/[A-Z]/.test(upper[i])) {
       currentMotif += upper[i];
       i++;
@@ -80,9 +143,7 @@ function parseForVisual(query: string): VisualPart[] {
       i++;
     }
   }
-  if (currentMotif) {
-    parts.push({ type: "motif", text: currentMotif, mm: currentMm, colorIdx: motifIdx });
-  }
+  flushMotif();
   return parts;
 }
 

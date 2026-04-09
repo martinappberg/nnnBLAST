@@ -43,10 +43,30 @@ MOTIF1[N:gap_spec]MOTIF2[N:gap_spec]MOTIF3
 
 Each **motif** is a nucleotide sequence (DNA or RNA) using IUPAC ambiguity codes. Each **gap** specifies how many nucleotides of any identity separate adjacent motifs.
 
+### Character Roles
+
+nnnBLAST has a clean separation between characters that belong to motifs and characters that create gaps:
+
+| Character | Where | Behavior | Scoring |
+|-----------|-------|----------|---------|
+| **A, T, G, C, U** | In motif | Exact base | +2 match, -3 mismatch |
+| **R, Y, S, W, K, M, B, D, H, V** | In motif | IUPAC ambiguity (e.g., R = A or G) | +2 if compatible, -3 if not |
+| **X** | In motif | Any base, **penalized** | -3 always (counts as mismatch) |
+| **N** | Between motifs | Gap shorthand: N = 1bp gap, NN = 2bp, etc. | Not scored (gap) |
+| **[N:5-15]** | Between motifs | Explicit gap range | Not scored (gap) |
+| **{mm:2}** | After motif | Per-motif mismatch limit | — |
+
+**Key distinction — X vs N:**
+- `X` stays **inside** the motif, keeping it as one continuous piece for BLAST anchor selection. It's sent to BLAST as `N`. Example: `GTGCCAGCXGCCGCGGTAA` = one 19bp motif.
+- `N` **breaks** the motif, creating a gap. Example: `AGGAGGNATCGATCG` = two motifs (`AGGAGG` + `ATCGATCG`) with 1bp gap.
+
 ### Gap Specifications
 
 | Syntax | Meaning |
 |--------|---------|
+| `N` | Exactly 1 nucleotide gap (shorthand for [N:1]) |
+| `NN` | Exactly 2 nucleotide gap |
+| `NNNNN` | Exactly 5 nucleotide gap |
 | `[N:10]` | Exactly 10 nucleotides |
 | `[N:5-15]` | Between 5 and 15 nucleotides (inclusive) |
 
@@ -60,9 +80,7 @@ AGGAGG{mm:1}[N:5-15]ATCGATCG{mm:0}[N:10-25]AGGCC
 - `{mm:0}` on `ATCGATCG`: require exact match
 - No annotation: use the global max_mismatches setting
 
-### IUPAC Ambiguity Codes
-
-All standard IUPAC nucleotide codes are supported:
+### IUPAC Ambiguity Codes (No Penalty)
 
 | Code | Bases | Degeneracy |
 |------|-------|------------|
@@ -77,7 +95,9 @@ All standard IUPAC nucleotide codes are supported:
 | D | not C (A, G, T) | 3 |
 | H | not G (A, C, T) | 3 |
 | V | not T (A, C, G) | 3 |
-| N | any base | 4 |
+| X | any base (**penalized**) | 4 |
+
+Note: `N` is NOT in this table — it creates gaps, not part of motifs.
 
 ### RNA Support
 
@@ -86,17 +106,20 @@ Queries can use U instead of T. The parser detects RNA mode automatically and no
 ### Examples
 
 ```
-# Self-replicating ribozyme conserved regions
-AGGAGG[N:5-15]ATCGATCG[N:10-25]AGGCC
+# 16S rRNA conserved regions with IUPAC codes
+GTGCCAGCMGCCGCGGTAA[N:250-300]ATTAGAWACCCBDGTAGTCC
 
-# Exact first motif, relaxed second
+# Motif with penalized wildcard position (X)
+GTGCCAGCXGCCGCGGTAA[N:250-300]ATCGATCG
+
+# N as gap shorthand (equivalent to [N:5])
+AGGAGGNNNNN ATCGATCG
+
+# Per-motif mismatch control
 AGGAGG{mm:0}[N:10]ATCGATCG{mm:2}
 
-# RNA query with ambiguity codes
+# RNA query
 RYWSAGG[N:5-20]AUCGAUCG
-
-# Single motif (equivalent to standard BLAST)
-ATCGATCGATCGATCG
 ```
 
 ---
