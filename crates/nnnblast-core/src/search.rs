@@ -3,7 +3,7 @@ use crate::index::Database;
 use crate::ncbi::{self, NcbiError};
 use crate::stats::{compute_evalue, estimate_base_frequencies, raw_to_bit_score};
 use crate::types::{
-    reverse_complement, select_anchor, Hit,
+    plan_fetch_regions, reverse_complement, select_anchor, Hit,
     MotifAlignment, NcbiParams, ProgressHandle, SearchParams, SearchResults,
 };
 use rayon::prelude::*;
@@ -229,23 +229,23 @@ pub async fn search_ncbi(
         });
     }
 
-    // Step 4: Fetch flanking regions and check ALL motifs
-    //
-    // For every BLAST hit, we fetch a region large enough to contain the
-    // full structured pattern, then scan it with our local search to find
-    // all motifs within gap constraints.
-    //
-    // The fetch window must be wide enough regardless of which motif or
-    // composite the BLAST hit corresponds to.
-    let total_query_span: usize = query.motifs.iter().map(|m| m.sequence.len()).sum::<usize>()
-        + query.gaps.iter().map(|g| g.max).sum::<usize>();
-    // Add generous padding (the BLAST hit might be for any motif or composite)
-    let padding = total_query_span + 50;
+    // Step 4: Plan fetch regions (group by accession, adaptive merge)
+    let (fetch_regions, plan_stats) = plan_fetch_regions(
+        &candidates,
+        query,
+        ncbi_params.max_blast_hits, // use as max_accessions
+    );
+    let total_regions = fetch_regions.len();
 
-    let total_candidates = candidates.len();
+    tracing::info!(
+        "Fetch plan: {} BLAST hits → {} accessions, {} regions{}",
+        plan_stats.total_blast_hits,
+        plan_stats.unique_accessions,
+        plan_stats.total_regions,
+        plan_stats.capped_at.map_or(String::new(), |n| format!(" (capped at {})", n)),
+    );
 
     // Concurrent Efetch with semaphore for rate limiting
-    // NCBI allows 3 req/s without API key, 10 with
     let max_concurrent: usize = if ncbi_params.api_key.is_some() { 8 } else { 3 };
     let delay = if ncbi_params.api_key.is_some() {
         std::time::Duration::from_millis(100)
@@ -257,28 +257,27 @@ pub async fn search_ncbi(
     let completed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     // Spawn all fetch+scan tasks concurrently
-    let fetch_tasks: Vec<_> = candidates
+    let fetch_tasks: Vec<_> = fetch_regions
         .iter()
-        .map(|blast_hit| {
+        .map(|region| {
             let sem = semaphore.clone();
             let client = client.clone();
-            let accession = blast_hit.accession.clone();
-            let description = blast_hit.description.clone();
-            let subject_length = blast_hit.subject_length;
-            let strand = blast_hit.strand;
-            let fetch_start = blast_hit.hit_from.saturating_sub(padding).max(1);
-            let fetch_end = blast_hit.hit_to + padding;
+            let accession = region.accession.clone();
+            let description = region.description.clone();
+            let subject_length = region.subject_length;
+            let fetch_start = region.fetch_start;
+            let fetch_end = region.fetch_end;
             let api_key = ncbi_params.api_key.clone();
             let params = params.clone();
             let anchor_idx = anchor_idx;
             let completed = completed.clone();
             let progress = progress.clone();
-            let total = total_candidates;
+            let total = total_regions;
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
 
-                let region = match ncbi::fetch_region(
+                let region_seq = match ncbi::fetch_region(
                     &client,
                     &accession,
                     fetch_start,
@@ -302,14 +301,14 @@ pub async fn search_ncbi(
                 let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 update_progress(&progress, "fetching_regions", Some(format!("{}/{}", done, total))).await;
 
-                if region.len() < 50 {
+                if region_seq.len() < 50 {
                     return vec![];
                 }
 
                 // Local scan (both strands)
                 let mut region_hits =
-                    search_strand(&accession, &region, '+', &params, anchor_idx);
-                let rc = reverse_complement(&region);
+                    search_strand(&accession, &region_seq, '+', &params, anchor_idx);
+                let rc = reverse_complement(&region_seq);
                 region_hits.extend(search_strand(&accession, &rc, '-', &params, anchor_idx));
 
                 for hit in &mut region_hits {
@@ -368,7 +367,7 @@ pub async fn search_ncbi(
         query.motifs.len(),
         query.gaps.len(),
         anchor_idx,
-        total_candidates,
+        plan_stats.unique_accessions,
         structured_hits.len(),
         ncbi_params.database,
     );
@@ -376,7 +375,7 @@ pub async fn search_ncbi(
     Ok(SearchResults {
         hits: structured_hits,
         database_size: db_size,
-        num_sequences: total_candidates,
+        num_sequences: plan_stats.unique_accessions,
         query_info,
     })
 }

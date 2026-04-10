@@ -13,6 +13,7 @@ import init, {
   parse_and_validate_query,
   choose_blast_strategy,
   parse_blast_xml,
+  plan_fetch_regions,
   check_motifs_in_region,
   score_hits,
 } from "./wasm/nnnblast_wasm";
@@ -24,6 +25,13 @@ export type WorkerRequest =
   | { type: "parse_query"; id: string; query: string }
   | { type: "choose_strategy"; id: string; queryJson: string }
   | { type: "parse_blast_xml"; id: string; xml: string }
+  | {
+      type: "plan_fetch_regions";
+      id: string;
+      blastHitsJson: string;
+      queryJson: string;
+      maxAccessions: number;
+    }
   | {
       type: "check_region";
       id: string;
@@ -97,6 +105,9 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         break;
       case "parse_blast_xml":
         result = parse_blast_xml(msg.xml);
+        break;
+      case "plan_fetch_regions":
+        result = plan_fetch_regions(msg.blastHitsJson, msg.queryJson, msg.maxAccessions);
         break;
       case "check_region":
         result = check_motifs_in_region(
