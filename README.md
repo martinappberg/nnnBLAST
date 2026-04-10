@@ -10,7 +10,7 @@ nnnBLAST finds multiple conserved sequence motifs separated by variable-length g
 
 Standard BLAST can't express this. nnnBLAST can.
 
-**[Try it live →](https://your-username.github.io/nnBLAST)** · **[How it works →](ABOUT.md)**
+**[Try it live →](https://martinappberg.github.io/nnnBLAST)** · **[How it works →](ABOUT.md)**
 
 ---
 
