@@ -246,7 +246,7 @@ interface BlastXmlParsed {
   db_len: number;
 }
 
-interface AccessionGroup {
+interface FetchRegion {
   accession: string;
   description: string;
   subject_length: number;
@@ -491,52 +491,91 @@ async function runPipeline(
       parsed.query.gaps.reduce((s: number, g: { max: number }) => s + g.max, 0);
     const padding = querySpan + 50;
 
-    // Group by accession, compute widest fetch window
-    const groups = new Map<string, AccessionGroup>();
+    // Group by accession, then merge only overlapping windows (not all into one)
+    const perAccession = new Map<string, { description: string; subject_length: number; hits: BlastHitParsed[] }>();
     for (const hit of blastHits) {
-      const fetchStart = Math.max(1, hit.hit_from - padding);
-      const fetchEnd = hit.hit_to + padding;
-      const existing = groups.get(hit.accession);
-      if (existing) {
-        existing.fetchStart = Math.min(existing.fetchStart, fetchStart);
-        existing.fetchEnd = Math.max(existing.fetchEnd, fetchEnd);
-        existing.bestScore = Math.max(existing.bestScore, hit.score);
-      } else {
-        groups.set(hit.accession, {
-          accession: hit.accession,
-          description: hit.description,
-          subject_length: hit.subject_length,
-          fetchStart,
-          fetchEnd,
-          bestScore: hit.score,
+      let entry = perAccession.get(hit.accession);
+      if (!entry) {
+        entry = { description: hit.description, subject_length: hit.subject_length, hits: [] };
+        perAccession.set(hit.accession, entry);
+      }
+      entry.hits.push(hit);
+    }
+
+    // For each accession, compute non-overlapping fetch windows
+    const allRegions: FetchRegion[] = [];
+    for (const [accession, entry] of perAccession) {
+      // Build individual windows per hit, then merge overlapping ones
+      const windows = entry.hits.map((h) => ({
+        start: Math.max(1, h.hit_from - padding),
+        end: h.hit_to + padding,
+        bestScore: h.score,
+      }));
+      windows.sort((a, b) => a.start - b.start);
+
+      // Merge overlapping/adjacent windows
+      const merged: { start: number; end: number; bestScore: number }[] = [];
+      for (const w of windows) {
+        const last = merged[merged.length - 1];
+        if (last && w.start <= last.end) {
+          last.end = Math.max(last.end, w.end);
+          last.bestScore = Math.max(last.bestScore, w.bestScore);
+        } else {
+          merged.push({ ...w });
+        }
+      }
+
+      for (const m of merged) {
+        allRegions.push({
+          accession,
+          description: entry.description,
+          subject_length: entry.subject_length,
+          fetchStart: m.start,
+          fetchEnd: m.end,
+          bestScore: m.bestScore,
         });
       }
     }
 
-    // Sort by best BLAST score, cap if needed
-    let sorted = [...groups.values()].sort((a, b) => b.bestScore - a.bestScore);
-    job.uniqueAccessions = sorted.length;
+    // Sort by best BLAST score, cap by unique accessions
+    allRegions.sort((a, b) => b.bestScore - a.bestScore);
+    job.uniqueAccessions = perAccession.size;
 
-    if (params.maxAccessions > 0 && sorted.length > params.maxAccessions) {
+    // Cap by unique accessions: keep all regions for the top N accessions
+    let regions = allRegions;
+    if (params.maxAccessions > 0 && perAccession.size > params.maxAccessions) {
       job.cappedAt = params.maxAccessions;
-      sorted = sorted.slice(0, params.maxAccessions);
+      // Find which accessions are in the top N (by best score across their regions)
+      const bestPerAccession = new Map<string, number>();
+      for (const r of allRegions) {
+        bestPerAccession.set(r.accession, Math.max(bestPerAccession.get(r.accession) || 0, r.bestScore));
+      }
+      const topAccessions = new Set(
+        [...bestPerAccession.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, params.maxAccessions)
+          .map(([acc]) => acc),
+      );
+      regions = allRegions.filter((r) => topAccessions.has(r.accession));
     }
 
-    job.accessionQueue = sorted.map((g) => JSON.stringify(g));
+    job.accessionQueue = regions.map((g) => JSON.stringify(g));
     job.phase = "fetching";
     saveJob(job);
 
     onProgress(
       "deduplicating",
-      `${blastHits.length} hits → ${sorted.length} unique accessions${job.cappedAt ? ` (top ${job.cappedAt})` : ""}`,
+      `${blastHits.length} hits → ${perAccession.size} unique accessions, ${regions.length} regions${job.cappedAt ? ` (top ${job.cappedAt} accessions)` : ""}`,
     );
   }
 
   // ─── Phase: Fetch + check (workers handle alignment in parallel) ───
   if (job.phase === "fetching") {
-    const queue: AccessionGroup[] = (job.accessionQueue || []).map((s) => JSON.parse(s));
+    const queue: FetchRegion[] = (job.accessionQueue || []).map((s) => JSON.parse(s));
+    // fetchedAccessions tracks "accession:start-end" keys for region-level resume
     const fetchedSet = new Set(job.fetchedAccessions);
-    const remaining = queue.filter((g) => !fetchedSet.has(g.accession));
+    const regionKey = (r: FetchRegion) => `${r.accession}:${r.fetchStart}-${r.fetchEnd}`;
+    const remaining = queue.filter((g) => !fetchedSet.has(regionKey(g)));
     const total = queue.length;
 
     const concurrency = params.apiKey ? 10 : 3;
@@ -566,7 +605,7 @@ async function runPipeline(
         try {
           const resp = await fetchWithRetry(proxyUrl, efetchUrl, signal);
           if (!resp.ok) {
-            job.failedAccessions.push(group.accession);
+            job.failedAccessions.push(regionKey(group));
             return [];
           }
           const fasta = await resp.text();
@@ -582,14 +621,14 @@ async function runPipeline(
           return JSON.parse(hitsJson) as Hit[];
         } catch (e) {
           if (e instanceof DOMException && e.name === "AbortError") throw e;
-          job.failedAccessions.push(group.accession);
+          job.failedAccessions.push(regionKey(group));
           return [];
         }
       });
 
       const batchResults = await Promise.all(promises);
       for (const group of batch) {
-        job.fetchedAccessions.push(group.accession);
+        job.fetchedAccessions.push(regionKey(group));
       }
       for (const hits of batchResults) {
         job.partialHits.push(...hits);
@@ -599,7 +638,7 @@ async function runPipeline(
       const done = job.fetchedAccessions.length;
       const pct = Math.round((done / total) * 100);
       const failCount = job.failedAccessions.length;
-      const detail = `${done}/${total} accessions (${pct}%)${failCount > 0 ? ` — ${failCount} failed` : ""}`;
+      const detail = `${done}/${total} regions (${pct}%)${failCount > 0 ? ` — ${failCount} failed` : ""}`;
       onProgress("fetching_regions", detail);
 
       // Checkpoint every 10 batches
