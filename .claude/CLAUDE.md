@@ -102,7 +102,7 @@ wasm-pack build --target web crates/nnnblast-wasm --out-dir ../../web/src/wasm
 cd web && npm run build
 
 # Tests
-cargo test                      # 37 Rust tests
+cargo test                      # 43 Rust tests
 cd web && npm run build         # TypeScript type-check + build
 ```
 
@@ -112,6 +112,9 @@ cd web && npm run build         # TypeScript type-check + build
 - Deploy: `cd proxy && wrangler deploy`
 - Required because NCBI APIs don't support CORS
 
-## Known Issues / Outstanding Work
+## Tests
 
-See TODO.md for the current priority list.
+```bash
+cargo test    # 43 Rust tests
+cd web && npm run build   # TypeScript type-check + build
+```

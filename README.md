@@ -46,7 +46,8 @@ Two conserved primer sites (515F + 806R) flanking the V4 hypervariable region. F
 ```
 User query  →  Parse motifs + gaps
             →  BLAST the longest motif against NCBI
-            →  Fetch surrounding regions via Efetch
+            →  Group hits by accession, adaptively merge nearby regions
+            →  Fetch merged regions via Efetch
             →  Check all motifs locally (with gap constraints)
             →  Score with structured E-value
             →  Ranked results
@@ -58,7 +59,7 @@ The E-value formula accounts for database size, gap window flexibility, and per-
 
 ## Deployment
 
-nnnBLAST runs as a **static website** — no backend server needed. Computation happens in the browser via WebAssembly. NCBI API calls go through a lightweight Cloudflare Worker CORS proxy.
+nnnBLAST runs as a **static website** — no backend server needed. Computation happens in the browser via WebAssembly running in a pool of Web Workers (off the main thread). NCBI API calls go through a lightweight Cloudflare Worker CORS proxy.
 
 ### Prerequisites
 
@@ -127,7 +128,7 @@ Open http://localhost:5173. The dev server auto-detects the backend and uses it 
 ### Running tests
 
 ```bash
-# Rust tests (37 tests: parser, alignment, scoring, XML parsing, X/N semantics)
+# Rust tests (43 tests: parser, alignment, scoring, XML parsing, X/N semantics, fetch planning)
 cargo test
 
 # Frontend type-check + build
@@ -139,16 +140,17 @@ cd web && npm run build
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│       Static Site (GitHub Pages)    │
-│  ┌──────────┐  ┌─────────────────┐  │
-│  │  React   │  │  Rust → WASM    │  │
-│  │  UI      │──│  (alignment,    │  │
-│  │          │  │   scoring,      │  │
-│  │          │  │   E-value)      │  │
-│  └────┬─────┘  └─────────────────┘  │
-│       │                              │
-└───────┼──────────────────────────────┘
+┌──────────────────────────────────────────┐
+│        Static Site (GitHub Pages)        │
+│  ┌──────────┐  ┌──────────────────────┐  │
+│  │  React   │  │  Web Worker Pool     │  │
+│  │  UI      │──│  (Rust → WASM)       │  │
+│  │  (main   │  │  alignment, scoring, │  │
+│  │  thread) │  │  E-value, dedup/     │  │
+│  │          │  │  fetch planning      │  │
+│  └────┬─────┘  └──────────────────────┘  │
+│       │                                   │
+└───────┼───────────────────────────────────┘
         │ fetch()
         ▼
 ┌────────────────────┐     ┌──────────────┐

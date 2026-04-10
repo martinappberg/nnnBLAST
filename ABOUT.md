@@ -273,13 +273,20 @@ When motifs are short AND gaps are large (>100bp total max gap), the composite w
 
 ### Stage 3: Fetch Flanking Regions
 
-For each BLAST hit, we fetch the surrounding genomic sequence from NCBI using the Entrez Efetch API.
+BLAST may return thousands of HSPs (high-scoring pairs), many on the same accession. Fetching each individually would be extremely slow. Instead, we use **adaptive region merging** (`plan_fetch_regions` in Rust) to minimize HTTP requests while covering every BLAST hit location:
 
-**Fetch window**: The hit position +/- (total query span + 50bp padding), where total query span = sum of all motif lengths + sum of all maximum gap sizes. This ensures the fetched region is large enough to contain the full structured pattern regardless of which motif the BLAST hit corresponds to.
+1. **Group by accession**: All HSPs for the same sequence are collected together.
+2. **Compute fetch windows**: Each HSP gets a window of `hit_position +/- (total_query_span + 50bp)`, ensuring the full structured pattern can be found.
+3. **Adaptive merge**: Windows on the same accession are merged if they overlap or are nearby. The merge gap starts small (~20kb) and increases (4x each iteration) until there are at most 10 regions per accession, capped at 5Mb per region. This avoids both extremes: fetching an entire 98Mbp chromosome as one request, or making thousands of tiny requests.
+4. **Cap by max sequences**: The user-selected limit (default 500) keeps the top-scoring accessions.
+
+For example, an Alu repeat query returning 80,000 HSPs across 500 chromosomes is reduced to ~930 merged fetch regions — each covering multiple nearby BLAST hits.
 
 **Efetch parameters**: `db=nuccore`, `rettype=fasta`, `seq_start`/`seq_stop` (1-based inclusive).
 
 **Rate limiting**: 350ms between requests (3 req/s, NCBI default limit), or 100ms with an API key (10 req/s).
+
+**Concurrency**: 3 parallel requests without API key, 10 with. All WASM computation (alignment, scoring) runs in a pool of Web Workers off the main thread, preventing browser UI freezes.
 
 ### Stage 4: Local Motif Extension
 
@@ -386,6 +393,16 @@ This is the expected number of times the complete structured pattern would appea
 - **p_i(S_i)**: The probability that each motif actually matches at any given position with the observed score
 
 Their product = the expected number of complete chance structured matches.
+
+### Numerical Implementation
+
+The E-value computation is performed in **log space** to prevent floating-point underflow:
+
+```
+log(E) = log(N_eff) + sum(log(W_i)) + sum(log(p_i(S_i)))
+```
+
+For long motifs (e.g., 280bp Alu consensus sequences with 30 allowed mismatches), the per-motif probabilities can be astronomically small (< 10^-150). Computing the product directly would underflow to 0.0 in IEEE 754 double precision. Working in log space and exponentiating at the end avoids this. If `log(E) < -700`, the E-value is clamped to `1e-300` (the smallest displayable value).
 
 ### Properties of the E-value
 
@@ -626,9 +643,9 @@ GET /api/results/{job_id}
 - **FM-index for local mode**: Replace brute-force scan with FM-index seed-and-extend for O(m) seed lookup
 - **Position-specific scoring**: Allow PSSM-like motifs where each position has its own match/mismatch weights
 - **Gapped alignment within motifs**: Smith-Waterman for longer motifs that may have indels
-- **WASM compilation**: Run the core library in the browser for small databases (no server needed)
-- **Batch Efetch**: Group multiple hits on the same accession into a single fetch with the widest needed range
 - **Empirical E-value calibration**: Fit lambda and K parameters from actual structured search score distributions rather than using BLASTN approximations
+- **Result export**: CSV/TSV download of results
+- **Local FASTA mode in browser**: Drag-and-drop a FASTA file, search with WASM (no NCBI needed)
 
 ---
 
@@ -647,7 +664,7 @@ Open http://localhost:5173 in your browser. The frontend proxies API calls to th
 ### Running Tests
 
 ```bash
-# All Rust tests (29 tests covering parser, alignment, search, statistics, XML parsing)
+# All Rust tests (43 tests: parser, alignment, search, statistics, XML parsing, fetch planning)
 cargo test
 
 # Frontend type-check and build

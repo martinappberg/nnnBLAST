@@ -48,7 +48,7 @@ const PIPELINE_STEPS = [
     step: "3",
     title: "Fetch",
     description:
-      "For each BLAST hit, flanking genomic regions are fetched from NCBI to cover the full structured motif span.",
+      "BLAST hits are grouped by accession and nearby regions are merged. Merged regions are fetched from NCBI via Efetch, minimizing HTTP requests.",
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
@@ -70,7 +70,7 @@ const PIPELINE_STEPS = [
     step: "5",
     title: "Score",
     description:
-      "Valid hits are scored and ranked. A composite E-value is calculated combining BLAST statistics with motif-level scoring.",
+      "Valid hits receive a structured E-value based on database size, gap widths, and per-motif match probabilities. Hits are ranked by significance.",
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
@@ -273,18 +273,19 @@ export function AboutPage() {
                 N<sub>eff</sub>
               </span>
               <span>
-                Effective database size: the number of candidate sequences that
-                passed the initial BLAST filter. This replaces the full database
-                size to avoid over-counting.
+                Effective database size: 2 &times; (D &minus; n &times; L<sub>min</sub>),
+                where D is the total database length in bases, n is the number of
+                sequences, and L<sub>min</sub> is the minimum query span. The
+                factor of 2 accounts for both DNA strands.
               </span>
 
               <span className="font-mono font-bold text-[#1C1917]">
                 W<sub>i</sub>
               </span>
               <span>
-                Gap window factor for the i-th gap: (max - min + 1) / L, where L
-                is the total candidate region length. Wider gap ranges increase
-                the chance of a random match.
+                Gap window width for the i-th gap: (max &minus; min + 1).
+                This is the number of positions where the next motif could start.
+                Wider gap ranges give more chances for a random match.
               </span>
 
               <span className="font-mono font-bold text-[#1C1917]">
@@ -341,14 +342,14 @@ export function AboutPage() {
             <div className="font-semibold text-[#1C1917]">Putting it together</div>
             <ul className="text-xs text-[#57534E] space-y-1">
               <li>
-                <strong>Gap window:</strong> W = (300 - 250 + 1) / 600 = 0.085
+                <strong>Gap window:</strong> W = 300 &minus; 250 + 1 = 51
               </li>
               <li>
-                <strong>N<sub>eff</sub>:</strong> say 500 BLAST candidates
+                <strong>N<sub>eff</sub>:</strong> 2 &times; 991 billion &asymp; 2 &times; 10<sup>12</sup> (core_nt, both strands)
               </li>
               <li>
-                <strong>E-value:</strong> 500 x 0.085 x 2<sup>-37</sup> x 9 x 2<sup>-40</sup>{" "}
-                -- extremely significant
+                <strong>E-value:</strong> 2&times;10<sup>12</sup> &times; 51 &times; 2<sup>-37</sup> &times; 9&times;2<sup>-40</sup>{" "}
+                &asymp; 0.68 — borderline significant for short motifs
               </li>
             </ul>
             <p className="text-xs text-[#A8A29E] pt-1">
