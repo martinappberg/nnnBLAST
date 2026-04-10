@@ -3,6 +3,8 @@ name: Build & Deploy to GitHub Pages
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -56,11 +58,13 @@ jobs:
           VITE_PROXY_URL: ${{ vars.PROXY_URL || 'https://nnnblast-cors-proxy.workers.dev' }}
 
       - name: Upload artifact
+        if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
 
   deploy:
+    if: github.event_name == 'push'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
