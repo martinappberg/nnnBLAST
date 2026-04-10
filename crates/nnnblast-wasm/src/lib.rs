@@ -200,7 +200,7 @@ pub fn parse_blast_xml(xml: &str) -> Result<String, JsError> {
     Ok(serde_json::to_string(&result).unwrap())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct BlastHitJs {
     accession: String,
     description: String,
@@ -216,6 +216,48 @@ struct BlastHitJs {
 struct BlastXmlResult {
     hits: Vec<BlastHitJs>,
     db_len: usize,
+}
+
+// ─── Fetch Region Planning ───
+
+/// Plan fetch regions from BLAST hits: group by accession, adaptively merge
+/// nearby windows, cap by max_accessions. Returns JSON with regions + stats.
+#[wasm_bindgen]
+pub fn plan_fetch_regions(
+    blast_hits_json: &str,
+    query_json: &str,
+    max_accessions: usize,
+) -> Result<String, JsError> {
+    let hits: Vec<BlastHitJs> =
+        serde_json::from_str(blast_hits_json).map_err(|e| JsError::new(&e.to_string()))?;
+    let query: StructuredQuery =
+        serde_json::from_str(query_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    // Convert BlastHitJs → BlastHit (core type)
+    let core_hits: Vec<nnnblast_core::types::BlastHit> = hits
+        .iter()
+        .map(|h| nnnblast_core::types::BlastHit {
+            accession: h.accession.clone(),
+            description: h.description.clone(),
+            subject_length: h.subject_length,
+            hit_from: h.hit_from,
+            hit_to: h.hit_to,
+            strand: h.strand,
+            score: h.score,
+            evalue: h.evalue,
+        })
+        .collect();
+
+    let (regions, stats) = nnnblast_core::types::plan_fetch_regions(&core_hits, &query, max_accessions);
+
+    let result = FetchPlanResult { regions, stats };
+    Ok(serde_json::to_string(&result).unwrap())
+}
+
+#[derive(Serialize)]
+struct FetchPlanResult {
+    regions: Vec<nnnblast_core::types::FetchRegion>,
+    stats: nnnblast_core::types::FetchPlanStats,
 }
 
 // ─── Motif Checking ───

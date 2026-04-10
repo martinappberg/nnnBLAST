@@ -112,24 +112,30 @@ pub fn compute_evalue(
         2.0 * database_size as f64
     };
 
-    // Product of gap window widths
-    let gap_product: f64 = query
-        .gaps
-        .iter()
-        .map(|g| (g.max - g.min + 1) as f64)
-        .product();
+    // Work in log space to avoid floating-point underflow with long motifs.
+    // log(E) = log(N_eff) + Σ log(W_i) + Σ log(p_i)
+    let log_e = n_eff.ln()
+        + query
+            .gaps
+            .iter()
+            .map(|g| ((g.max - g.min + 1) as f64).ln())
+            .sum::<f64>()
+        + query
+            .motifs
+            .iter()
+            .zip(motif_scores.iter())
+            .map(|(motif, &score)| {
+                let p = motif_match_probability(motif, score, match_score, mismatch_score, base_freqs);
+                if p <= 0.0 { f64::NEG_INFINITY } else { p.ln() }
+            })
+            .sum::<f64>();
 
-    // Product of per-motif match probabilities
-    let prob_product: f64 = query
-        .motifs
-        .iter()
-        .zip(motif_scores.iter())
-        .map(|(motif, &score)| {
-            motif_match_probability(motif, score, match_score, mismatch_score, base_freqs)
-        })
-        .product();
-
-    n_eff * gap_product * prob_product
+    if log_e.is_nan() || log_e == f64::NEG_INFINITY || log_e < -700.0 {
+        // Probability too small for f64 — clamp to a displayable minimum
+        1e-300
+    } else {
+        log_e.exp()
+    }
 }
 
 /// Estimate the minimum span of the full structured query.

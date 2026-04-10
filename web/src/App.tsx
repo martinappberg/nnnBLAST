@@ -59,7 +59,7 @@ function SearchPage() {
   const [email, setEmail] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [evalCutoff, setEvalCutoff] = useState(10);
-  const [maxAccessions, setMaxAccessions] = useState(1000);
+  const [maxAccessions, setMaxAccessions] = useState(500);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResults | null>(null);
@@ -364,44 +364,54 @@ function SearchPage() {
               <option value={0.01}>0.01</option>
               <option value={0.1}>0.1</option>
               <option value={1}>1</option>
-              <option value={10}>10</option>
+              <option value={10}>10 (default)</option>
               <option value={100}>100</option>
               <option value={1000}>1000</option>
             </select>
+            <p className="text-[10px] text-[#A8A29E] mt-0.5">Lower = stricter. Only show hits expected &lt;N times by chance</p>
           </div>
 
           {/* Email */}
           <div>
             <label className="block text-xs font-medium text-[#57534E] mb-1">
-              Email (required by NCBI)
+              Email <span className="text-[#D7827E]">*</span>
             </label>
             <input
               type="email"
-              className="w-full border border-[#FECDD3]/50 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none"
+              className={`w-full border rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none ${
+                !email.trim() ? "border-[#D7827E]/40 bg-[#FFF8F7]" : "border-[#FECDD3]/50"
+              }`}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
             />
+            <p className="text-[10px] text-[#A8A29E] mt-0.5">Required by NCBI usage policy</p>
           </div>
 
           {/* API key (optional) */}
           <div>
             <label className="block text-xs font-medium text-[#57534E] mb-1">
-              NCBI API key (optional, faster)
+              NCBI API key
             </label>
             <input
               type="text"
               className="w-full border border-[#FECDD3]/50 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Optional"
+              placeholder="Optional — speeds up search 3x"
             />
+            <p className="text-[10px] text-[#A8A29E] mt-0.5">
+              Get one free at{" "}
+              <a href="https://www.ncbi.nlm.nih.gov/account/settings/" target="_blank" rel="noopener noreferrer" className="underline hover:text-[#57534E]">
+                ncbi.nlm.nih.gov/account
+              </a>
+            </p>
           </div>
 
-          {/* Max accessions to process */}
+          {/* Max sequences to process */}
           <div>
             <label className="block text-xs font-medium text-[#57534E] mb-1">
-              Max accessions to process
+              Max sequences to scan
             </label>
             <select
               className="w-full border border-[#FECDD3]/50 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none"
@@ -409,11 +419,12 @@ function SearchPage() {
               onChange={(e) => setMaxAccessions(Number(e.target.value))}
             >
               <option value={100}>100</option>
-              <option value={500}>500</option>
+              <option value={500}>500 (default)</option>
               <option value={1000}>1,000</option>
               <option value={5000}>5,000</option>
               <option value={0}>All (no limit)</option>
             </select>
+            <p className="text-[10px] text-[#A8A29E] mt-0.5">Top BLAST hits to check for structured motifs</p>
           </div>
         </div>
 
@@ -432,6 +443,9 @@ function SearchPage() {
             >
               Cancel
             </button>
+          )}
+          {!loading && !email.trim() && query.trim() && (
+            <span className="text-xs text-[#D7827E]">Enter your email to enable search</span>
           )}
         </div>
       </section>

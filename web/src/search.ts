@@ -153,6 +153,20 @@ async function wasmCheckRegion(
   });
 }
 
+async function wasmPlanFetchRegions(
+  blastHitsJson: string,
+  queryJson: string,
+  maxAccessions: number,
+): Promise<string> {
+  return callWorker({
+    type: "plan_fetch_regions",
+    id: nextId(),
+    blastHitsJson,
+    queryJson,
+    maxAccessions,
+  });
+}
+
 async function wasmScoreHits(
   hitsJson: string,
   queryJson: string,
@@ -246,13 +260,24 @@ interface BlastXmlParsed {
   db_len: number;
 }
 
+// Matches Rust FetchRegion (snake_case from serde)
 interface FetchRegion {
   accession: string;
   description: string;
   subject_length: number;
-  fetchStart: number;
-  fetchEnd: number;
-  bestScore: number;
+  fetch_start: number;
+  fetch_end: number;
+  best_score: number;
+}
+
+interface FetchPlanResult {
+  regions: FetchRegion[];
+  stats: {
+    total_blast_hits: number;
+    unique_accessions: number;
+    total_regions: number;
+    capped_at: number | null;
+  };
 }
 
 // ─── Persistence helpers ───
@@ -462,13 +487,14 @@ async function runPipeline(
     }
   }
 
-  // ─── Phase: Dedup ───
+  // ─── Phase: Dedup (WASM: group by accession, adaptive merge, cap) ───
   if (job.phase === "blast_done" || job.phase === "deduplicating") {
     job.phase = "deduplicating";
     onProgress("deduplicating", `${job.totalBlastHits} BLAST hits`);
     signal?.throwIfAborted();
 
-    const blastHits: BlastHitParsed[] = JSON.parse(job.blastHitsJson || "[]");
+    const blastHitsJson = job.blastHitsJson || "[]";
+    const blastHits: BlastHitParsed[] = JSON.parse(blastHitsJson);
 
     if (blastHits.length === 0) {
       job.phase = "complete";
@@ -483,89 +509,26 @@ async function runPipeline(
       return job.results;
     }
 
-    // Parse query for span calculation
+    // All merge/dedup logic runs in Rust WASM
     const parseResult = await wasmParseQuery(params.query);
     const parsed = JSON.parse(parseResult);
-    const querySpan =
-      parsed.query.motifs.reduce((s: number, m: { sequence: number[] }) => s + m.sequence.length, 0) +
-      parsed.query.gaps.reduce((s: number, g: { max: number }) => s + g.max, 0);
-    const padding = querySpan + 50;
+    const planJson = await wasmPlanFetchRegions(
+      blastHitsJson,
+      JSON.stringify(parsed.query),
+      params.maxAccessions,
+    );
+    const plan: FetchPlanResult = JSON.parse(planJson);
 
-    // Group by accession, then merge only overlapping windows (not all into one)
-    const perAccession = new Map<string, { description: string; subject_length: number; hits: BlastHitParsed[] }>();
-    for (const hit of blastHits) {
-      let entry = perAccession.get(hit.accession);
-      if (!entry) {
-        entry = { description: hit.description, subject_length: hit.subject_length, hits: [] };
-        perAccession.set(hit.accession, entry);
-      }
-      entry.hits.push(hit);
-    }
-
-    // For each accession, compute non-overlapping fetch windows
-    const allRegions: FetchRegion[] = [];
-    for (const [accession, entry] of perAccession) {
-      // Build individual windows per hit, then merge overlapping ones
-      const windows = entry.hits.map((h) => ({
-        start: Math.max(1, h.hit_from - padding),
-        end: h.hit_to + padding,
-        bestScore: h.score,
-      }));
-      windows.sort((a, b) => a.start - b.start);
-
-      // Merge overlapping/adjacent windows
-      const merged: { start: number; end: number; bestScore: number }[] = [];
-      for (const w of windows) {
-        const last = merged[merged.length - 1];
-        if (last && w.start <= last.end) {
-          last.end = Math.max(last.end, w.end);
-          last.bestScore = Math.max(last.bestScore, w.bestScore);
-        } else {
-          merged.push({ ...w });
-        }
-      }
-
-      for (const m of merged) {
-        allRegions.push({
-          accession,
-          description: entry.description,
-          subject_length: entry.subject_length,
-          fetchStart: m.start,
-          fetchEnd: m.end,
-          bestScore: m.bestScore,
-        });
-      }
-    }
-
-    // Sort by best BLAST score, cap by unique accessions
-    allRegions.sort((a, b) => b.bestScore - a.bestScore);
-    job.uniqueAccessions = perAccession.size;
-
-    // Cap by unique accessions: keep all regions for the top N accessions
-    let regions = allRegions;
-    if (params.maxAccessions > 0 && perAccession.size > params.maxAccessions) {
-      job.cappedAt = params.maxAccessions;
-      // Find which accessions are in the top N (by best score across their regions)
-      const bestPerAccession = new Map<string, number>();
-      for (const r of allRegions) {
-        bestPerAccession.set(r.accession, Math.max(bestPerAccession.get(r.accession) || 0, r.bestScore));
-      }
-      const topAccessions = new Set(
-        [...bestPerAccession.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, params.maxAccessions)
-          .map(([acc]) => acc),
-      );
-      regions = allRegions.filter((r) => topAccessions.has(r.accession));
-    }
-
-    job.accessionQueue = regions.map((g) => JSON.stringify(g));
+    job.uniqueAccessions = plan.stats.unique_accessions;
+    job.cappedAt = plan.stats.capped_at ?? undefined;
+    job.accessionQueue = plan.regions.map((r) => JSON.stringify(r));
     job.phase = "fetching";
     saveJob(job);
 
+    const cappedMsg = plan.stats.capped_at ? ` (top ${plan.stats.capped_at} accessions)` : "";
     onProgress(
       "deduplicating",
-      `${blastHits.length} hits → ${perAccession.size} unique accessions, ${regions.length} regions${job.cappedAt ? ` (top ${job.cappedAt} accessions)` : ""}`,
+      `${plan.stats.total_blast_hits} hits → ${plan.stats.unique_accessions} unique accessions, ${plan.stats.total_regions} regions${cappedMsg}`,
     );
   }
 
@@ -574,7 +537,7 @@ async function runPipeline(
     const queue: FetchRegion[] = (job.accessionQueue || []).map((s) => JSON.parse(s));
     // fetchedAccessions tracks "accession:start-end" keys for region-level resume
     const fetchedSet = new Set(job.fetchedAccessions);
-    const regionKey = (r: FetchRegion) => `${r.accession}:${r.fetchStart}-${r.fetchEnd}`;
+    const regionKey = (r: FetchRegion) => `${r.accession}:${r.fetch_start}-${r.fetch_end}`;
     const remaining = queue.filter((g) => !fetchedSet.has(regionKey(g)));
     const total = queue.length;
 
@@ -599,7 +562,7 @@ async function runPipeline(
 
       const promises = batch.map(async (group) => {
         const efetchUrl = appendApiKey(
-          `${EFETCH_URL}?db=nuccore&id=${group.accession}&rettype=fasta&retmode=text&seq_start=${group.fetchStart}&seq_stop=${group.fetchEnd}`,
+          `${EFETCH_URL}?db=nuccore&id=${group.accession}&rettype=fasta&retmode=text&seq_start=${group.fetch_start}&seq_stop=${group.fetch_end}`,
           params.apiKey,
         );
         try {

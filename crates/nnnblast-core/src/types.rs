@@ -325,3 +325,236 @@ pub fn compute_flanking_spans(query: &StructuredQuery, anchor_idx: usize) -> (us
 
     (left_span, right_span)
 }
+
+// ─── Fetch region planning (dedup + adaptive merge) ───
+
+/// A region to fetch from NCBI Efetch — covers one or more merged BLAST hits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchRegion {
+    pub accession: String,
+    pub description: String,
+    pub subject_length: usize,
+    pub fetch_start: usize,
+    pub fetch_end: usize,
+    pub best_score: i32,
+}
+
+/// Plan which regions to fetch from NCBI, given raw BLAST hits and the query.
+///
+/// Groups hits by accession, adaptively merges nearby windows to minimize HTTP
+/// requests while covering every BLAST hit location. Caps by unique accessions.
+///
+/// Returns a sorted (by best score) list of `FetchRegion`s.
+pub fn plan_fetch_regions(
+    blast_hits: &[BlastHit],
+    query: &StructuredQuery,
+    max_accessions: usize,
+) -> (Vec<FetchRegion>, FetchPlanStats) {
+    let query_span: usize = query.motifs.iter().map(|m| m.sequence.len()).sum::<usize>()
+        + query.gaps.iter().map(|g| g.max).sum::<usize>();
+    let padding = query_span + 50;
+    let max_fetch_size: usize = 5_000_000; // 5Mb max per fetch
+    let max_regions_per_accession: usize = 10;
+
+    // Group by accession
+    let mut per_accession: std::collections::HashMap<
+        String,
+        (String, usize, Vec<(usize, usize, i32)>), // (description, subject_length, [(start, end, score)])
+    > = std::collections::HashMap::new();
+
+    for hit in blast_hits {
+        let fetch_start = hit.hit_from.saturating_sub(padding).max(1);
+        let fetch_end = hit.hit_to + padding;
+        per_accession
+            .entry(hit.accession.clone())
+            .or_insert_with(|| (hit.description.clone(), hit.subject_length, Vec::new()))
+            .2
+            .push((fetch_start, fetch_end, hit.score));
+    }
+
+    let unique_accessions = per_accession.len();
+
+    // For each accession, adaptively merge windows
+    let mut all_regions: Vec<FetchRegion> = Vec::new();
+    for (accession, (description, subject_length, windows)) in &per_accession {
+        let mut wins: Vec<(usize, usize, i32)> = windows.clone();
+
+        let mut gap = (query_span * 2).max(20_000);
+        let mut merged = merge_windows(&mut wins, gap, max_fetch_size);
+        while merged.len() > max_regions_per_accession && gap < max_fetch_size {
+            gap *= 4;
+            merged = merge_windows(&mut wins, gap, max_fetch_size);
+        }
+
+        for (start, end, score) in merged {
+            all_regions.push(FetchRegion {
+                accession: accession.clone(),
+                description: description.clone(),
+                subject_length: *subject_length,
+                fetch_start: start,
+                fetch_end: end,
+                best_score: score,
+            });
+        }
+    }
+
+    // Sort by best score descending
+    all_regions.sort_by(|a, b| b.best_score.cmp(&a.best_score));
+
+    // Cap by unique accessions
+    let capped_at = if max_accessions > 0 && unique_accessions > max_accessions {
+        // Find top N accessions by best score
+        let mut best_per_acc: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
+        for r in &all_regions {
+            let entry = best_per_acc.entry(r.accession.clone()).or_insert(0);
+            *entry = (*entry).max(r.best_score);
+        }
+        let mut acc_scores: Vec<(String, i32)> = best_per_acc.into_iter().collect();
+        acc_scores.sort_by(|a, b| b.1.cmp(&a.1));
+        let top: std::collections::HashSet<String> = acc_scores
+            .into_iter()
+            .take(max_accessions)
+            .map(|(acc, _)| acc)
+            .collect();
+        all_regions.retain(|r| top.contains(&r.accession));
+        Some(max_accessions)
+    } else {
+        None
+    };
+
+    let stats = FetchPlanStats {
+        total_blast_hits: blast_hits.len(),
+        unique_accessions,
+        total_regions: all_regions.len(),
+        capped_at,
+    };
+
+    (all_regions, stats)
+}
+
+/// Statistics from the fetch planning step.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchPlanStats {
+    pub total_blast_hits: usize,
+    pub unique_accessions: usize,
+    pub total_regions: usize,
+    pub capped_at: Option<usize>,
+}
+
+/// Merge sorted windows within `gap` of each other, respecting `max_size`.
+fn merge_windows(
+    windows: &mut Vec<(usize, usize, i32)>,
+    gap: usize,
+    max_size: usize,
+) -> Vec<(usize, usize, i32)> {
+    windows.sort_by_key(|w| w.0);
+    let mut merged: Vec<(usize, usize, i32)> = Vec::new();
+    for &(start, end, score) in windows.iter() {
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 + gap && (end - last.0) <= max_size {
+                last.1 = last.1.max(end);
+                last.2 = last.2.max(score);
+                continue;
+            }
+        }
+        merged.push((start, end, score));
+    }
+    merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_hit(accession: &str, from: usize, to: usize, score: i32) -> BlastHit {
+        BlastHit {
+            accession: accession.to_string(),
+            description: format!("desc {}", accession),
+            subject_length: 100_000,
+            hit_from: from,
+            hit_to: to,
+            strand: '+',
+            score,
+            evalue: 1.0,
+        }
+    }
+
+    fn simple_query() -> StructuredQuery {
+        StructuredQuery {
+            motifs: vec![
+                Motif { sequence: b"ATCGATCG".to_vec(), max_mismatches: None },
+                Motif { sequence: b"GGCCAAGG".to_vec(), max_mismatches: None },
+            ],
+            gaps: vec![GapConstraint { min: 5, max: 15 }],
+        }
+    }
+
+    #[test]
+    fn single_hit_one_region() {
+        let hits = vec![make_hit("ACC1", 1000, 1050, 100)];
+        let (regions, stats) = plan_fetch_regions(&hits, &simple_query(), 0);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(stats.unique_accessions, 1);
+        assert_eq!(stats.total_regions, 1);
+        assert_eq!(regions[0].accession, "ACC1");
+    }
+
+    #[test]
+    fn nearby_hits_merge() {
+        // Two hits 500bp apart on same accession — should merge
+        let hits = vec![
+            make_hit("ACC1", 1000, 1050, 100),
+            make_hit("ACC1", 1500, 1550, 90),
+        ];
+        let (regions, stats) = plan_fetch_regions(&hits, &simple_query(), 0);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(stats.total_regions, 1);
+        assert!(regions[0].best_score == 100);
+    }
+
+    #[test]
+    fn distant_hits_separate() {
+        // Two hits 10Mb apart — should NOT merge into one region
+        let hits = vec![
+            make_hit("ACC1", 1_000_000, 1_000_050, 100),
+            make_hit("ACC1", 11_000_000, 11_000_050, 90),
+        ];
+        let (regions, _) = plan_fetch_regions(&hits, &simple_query(), 0);
+        assert!(regions.len() >= 2, "distant hits should be separate regions");
+    }
+
+    #[test]
+    fn max_accessions_caps() {
+        let hits = vec![
+            make_hit("ACC1", 1000, 1050, 100),
+            make_hit("ACC2", 2000, 2050, 50),
+            make_hit("ACC3", 3000, 3050, 75),
+        ];
+        let (regions, stats) = plan_fetch_regions(&hits, &simple_query(), 2);
+        assert_eq!(stats.capped_at, Some(2));
+        // Should keep ACC1 (score 100) and ACC3 (score 75), drop ACC2 (score 50)
+        let accessions: std::collections::HashSet<_> = regions.iter().map(|r| r.accession.as_str()).collect();
+        assert!(accessions.contains("ACC1"));
+        assert!(accessions.contains("ACC3"));
+        assert!(!accessions.contains("ACC2"));
+    }
+
+    #[test]
+    fn empty_hits() {
+        let (regions, stats) = plan_fetch_regions(&[], &simple_query(), 0);
+        assert_eq!(regions.len(), 0);
+        assert_eq!(stats.total_blast_hits, 0);
+    }
+
+    #[test]
+    fn adaptive_merge_reduces_regions() {
+        // Many hits scattered across a large range — should adaptively merge
+        let hits: Vec<BlastHit> = (0..100)
+            .map(|i| make_hit("ACC1", i * 50_000, i * 50_000 + 50, 100 - i as i32))
+            .collect();
+        let (regions, _) = plan_fetch_regions(&hits, &simple_query(), 0);
+        // Should merge into ≤ 10 regions (maxRegionsPerAccession)
+        assert!(regions.len() <= 10, "got {} regions, expected ≤ 10", regions.len());
+        assert!(regions.len() >= 1);
+    }
+}
