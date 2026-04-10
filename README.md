@@ -198,7 +198,7 @@ nnBLAST/
 If you use nnnBLAST in your research, please cite:
 
 > nnnBLAST: Structured motif nucleotide search with variable gaps.
-> https://github.com/your-username/nnBLAST
+> https://github.com/martinappberg/nnnBLAST
 
 ---
 
