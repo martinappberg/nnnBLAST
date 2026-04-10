@@ -423,6 +423,16 @@ export function AboutPage() {
           ))}
         </div>
       </section>
+
+      {/* Citation */}
+      <section className="max-w-4xl mx-auto mt-12 mb-8 text-center">
+        <p className="text-xs text-[#A8A29E]">
+          Vlassak, A. &amp; Kjellberg, M. nnnBLAST: Structured motif nucleotide search with variable gaps.{" "}
+          <a href="https://github.com/martinappberg/nnnBLAST" className="text-[#E8889A] hover:underline">
+            github.com/martinappberg/nnnBLAST
+          </a>
+        </p>
+      </section>
     </main>
   );
 }

@@ -1,5 +1,7 @@
 # nnn**BLAST**
 
+> **WORK IN PROGRESS** — This tool is under active development. Features and APIs may change.
+
 **Structured motif nucleotide search across NCBI databases.**
 
 nnnBLAST finds multiple conserved sequence motifs separated by variable-length gaps in real nucleotide databases. It answers:
@@ -197,7 +199,7 @@ nnBLAST/
 
 If you use nnnBLAST in your research, please cite:
 
-> nnnBLAST: Structured motif nucleotide search with variable gaps.
+> Vlassak, A. & Kjellberg, M. nnnBLAST: Structured motif nucleotide search with variable gaps.
 > https://github.com/martinappberg/nnnBLAST
 
 ---
