@@ -502,27 +502,47 @@ async function runPipeline(
       entry.hits.push(hit);
     }
 
-    // For each accession, compute non-overlapping fetch windows
-    const allRegions: FetchRegion[] = [];
-    for (const [accession, entry] of perAccession) {
-      // Build individual windows per hit, then merge overlapping ones
-      const windows = entry.hits.map((h) => ({
-        start: Math.max(1, h.hit_from - padding),
-        end: h.hit_to + padding,
-        bestScore: h.score,
-      }));
-      windows.sort((a, b) => a.start - b.start);
+    // For each accession, merge BLAST hit windows into fetch regions.
+    // Strategy: merge nearby windows to reduce HTTP requests, but never merge
+    // so aggressively that we fetch entire chromosomes. Every BLAST hit location
+    // is covered — we never discard regions, only combine nearby ones.
+    const maxFetchSize = 5_000_000; // 5Mb max per fetch
+    const maxRegionsPerAccession = 10; // target: at most 10 fetches per accession
 
-      // Merge overlapping/adjacent windows
+    function mergeWindows(
+      windows: { start: number; end: number; bestScore: number }[],
+      gap: number,
+    ): { start: number; end: number; bestScore: number }[] {
+      windows.sort((a, b) => a.start - b.start);
       const merged: { start: number; end: number; bestScore: number }[] = [];
       for (const w of windows) {
         const last = merged[merged.length - 1];
-        if (last && w.start <= last.end) {
+        if (last && w.start <= last.end + gap && (w.end - last.start) <= maxFetchSize) {
           last.end = Math.max(last.end, w.end);
           last.bestScore = Math.max(last.bestScore, w.bestScore);
         } else {
           merged.push({ ...w });
         }
+      }
+      return merged;
+    }
+
+    const allRegions: FetchRegion[] = [];
+    for (const [accession, entry] of perAccession) {
+      const windows = entry.hits.map((h) => ({
+        start: Math.max(1, h.hit_from - padding),
+        end: h.hit_to + padding,
+        bestScore: h.score,
+      }));
+
+      // Adaptive merge: start with a small gap, increase until we have
+      // ≤ maxRegionsPerAccession regions (or hit maxFetchSize limit).
+      // This ensures all BLAST hit locations are covered without dropping any.
+      let gap = Math.max(querySpan * 2, 20_000);
+      let merged = mergeWindows(windows, gap);
+      while (merged.length > maxRegionsPerAccession && gap < maxFetchSize) {
+        gap *= 4;
+        merged = mergeWindows(windows, gap);
       }
 
       for (const m of merged) {
@@ -537,15 +557,14 @@ async function runPipeline(
       }
     }
 
-    // Sort by best BLAST score, cap by unique accessions
+    // Sort all regions by best BLAST score
     allRegions.sort((a, b) => b.bestScore - a.bestScore);
     job.uniqueAccessions = perAccession.size;
 
-    // Cap by unique accessions: keep all regions for the top N accessions
+    // Cap by unique accessions (user-controlled parameter)
     let regions = allRegions;
     if (params.maxAccessions > 0 && perAccession.size > params.maxAccessions) {
       job.cappedAt = params.maxAccessions;
-      // Find which accessions are in the top N (by best score across their regions)
       const bestPerAccession = new Map<string, number>();
       for (const r of allRegions) {
         bestPerAccession.set(r.accession, Math.max(bestPerAccession.get(r.accession) || 0, r.bestScore));
