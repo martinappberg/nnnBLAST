@@ -434,7 +434,7 @@ pub fn score_hits(
     }
 
     hits.retain(|h| h.evalue <= evalue_cutoff);
-    hits.sort_by(|a, b| a.evalue.partial_cmp(&b.evalue).unwrap());
+    hits.sort_by(|a, b| a.evalue.total_cmp(&b.evalue));
 
     // Deduplicate
     let mut seen = std::collections::HashSet::new();

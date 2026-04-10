@@ -81,7 +81,8 @@ fn iupac_match_probability(query_base: u8, base_freqs: &[f64; 4]) -> f64 {
         b'H' => 1.0 - base_freqs[2],                   // not G
         b'V' => 1.0 - base_freqs[3],                   // not T
         b'N' => 1.0,
-        _ => 0.25, // fallback
+        b'X' => 0.0, // X = penalized wildcard, ALWAYS a mismatch
+        _ => 0.25,    // fallback for unknown bases
     }
 }
 
@@ -274,5 +275,27 @@ mod tests {
     #[test]
     fn bit_score_positive() {
         assert!(raw_to_bit_score(10) > 0.0);
+    }
+
+    #[test]
+    fn x_wildcard_never_matches() {
+        // X always mismatches — P(match) = 0.0
+        let freqs = [0.25, 0.25, 0.25, 0.25];
+        let p = iupac_match_probability(b'X', &freqs);
+        assert_eq!(p, 0.0);
+    }
+
+    #[test]
+    fn x_wildcard_motif_probability() {
+        // Motif "AX": X always mismatches, so exact match (score=4) is impossible.
+        // With min_score=-1 (allows 1mm): P = P(A matches)*P(X mismatches) = 0.25*1.0 = 0.25
+        let motif = Motif {
+            sequence: b"AX".to_vec(),
+            max_mismatches: None,
+        };
+        let freqs = [0.25, 0.25, 0.25, 0.25];
+        // score(0mm) = 4, score(1mm) = -1, score(2mm) = -6
+        let p = motif_match_probability(&motif, -1, 2, -3, &freqs);
+        assert!((p - 0.25).abs() < 1e-10, "expected 0.25, got {}", p);
     }
 }

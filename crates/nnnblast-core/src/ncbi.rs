@@ -134,10 +134,11 @@ pub async fn fetch_region(
     start: usize,
     end: usize,
     api_key: Option<&str>,
+    email: &str,
 ) -> Result<Vec<u8>, NcbiError> {
     let mut url = format!(
-        "{}?db=nuccore&id={}&rettype=fasta&retmode=text&seq_start={}&seq_stop={}",
-        EFETCH_URL, accession, start, end
+        "{}?db=nuccore&id={}&rettype=fasta&retmode=text&seq_start={}&seq_stop={}&tool=nnnblast&email={}",
+        EFETCH_URL, accession, start, end, email
     );
     if let Some(key) = api_key {
         url.push_str(&format!("&api_key={}", key));

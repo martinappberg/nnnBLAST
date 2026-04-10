@@ -353,7 +353,8 @@ async function fetchWithRetry(
     try {
       const resp = await proxyFetch(proxyUrl, url, signal);
       if (resp.status === 429) {
-        const delay = Math.min(60000, 1000 * Math.pow(2, attempt + 4));
+        const jitter = Math.random() * 500;
+        const delay = Math.min(30000, 1000 * Math.pow(2, attempt + 1) + jitter);
         await sleep(delay);
         continue;
       }
@@ -560,9 +561,11 @@ async function runPipeline(
       signal?.throwIfAborted();
       const batch = remaining.slice(i, i + concurrency);
 
-      const promises = batch.map(async (group) => {
+      const promises = batch.map(async (group, idx) => {
+        // Stagger requests within batch to stay under NCBI's 10/sec rate limit
+        if (idx > 0) await sleep(idx * 110);
         const efetchUrl = appendApiKey(
-          `${EFETCH_URL}?db=nuccore&id=${group.accession}&rettype=fasta&retmode=text&seq_start=${group.fetch_start}&seq_stop=${group.fetch_end}`,
+          `${EFETCH_URL}?db=nuccore&id=${group.accession}&rettype=fasta&retmode=text&seq_start=${group.fetch_start}&seq_stop=${group.fetch_end}&tool=nnnblast&email=${encodeURIComponent(params.email)}`,
           params.apiKey,
         );
         try {
