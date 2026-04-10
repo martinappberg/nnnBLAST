@@ -1,5 +1,6 @@
 /**
  * Browser-side nnnBLAST search pipeline with:
+ * - Web Worker pool for WASM (no main-thread blocking)
  * - Accession deduplication (fetch each accession once)
  * - Adaptive concurrency (3 without API key, 10 with)
  * - User-controlled processing limits
@@ -10,17 +11,166 @@
  */
 
 import type { SearchResults, Hit } from "./types";
+import type { WorkerRequest, WorkerResponse } from "./worker";
 
-// ─── WASM module ───
+// ─── Worker Pool ───
 
-let wasm: typeof import("./wasm/nnnblast_wasm") | null = null;
+const POOL_SIZE = Math.min(navigator.hardwareConcurrency || 4, 4);
+
+interface PendingCall {
+  resolve: (data: string) => void;
+  reject: (err: Error) => void;
+}
+
+interface PoolWorker {
+  worker: Worker;
+  ready: boolean;
+  pending: Map<string, PendingCall>;
+}
+
+let pool: PoolWorker[] | null = null;
+let poolReadyPromise: Promise<void> | null = null;
+let roundRobin = 0;
+
+function createPool(): Promise<void> {
+  if (poolReadyPromise) return poolReadyPromise;
+
+  pool = [];
+  const readyPromises: Promise<void>[] = [];
+
+  for (let i = 0; i < POOL_SIZE; i++) {
+    const worker = new Worker(new URL("./worker.ts", import.meta.url), {
+      type: "module",
+    });
+    const pw: PoolWorker = { worker, ready: false, pending: new Map() };
+
+    const readyP = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Worker init timeout")),
+        30000,
+      );
+      worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
+        const msg = e.data;
+        if (msg.type === "ready") {
+          pw.ready = true;
+          clearTimeout(timeout);
+          // Install permanent handler
+          worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
+            handleWorkerMessage(pw, ev.data);
+          };
+          resolve();
+          return;
+        }
+        if (msg.type === "error" && msg.id === "__init__") {
+          clearTimeout(timeout);
+          reject(new Error(msg.message));
+          return;
+        }
+        // Shouldn't happen during init, but handle gracefully
+        handleWorkerMessage(pw, msg);
+      };
+    });
+
+    worker.postMessage({ type: "init" } satisfies WorkerRequest);
+    pool.push(pw);
+    readyPromises.push(readyP);
+  }
+
+  poolReadyPromise = Promise.all(readyPromises).then(() => {});
+  return poolReadyPromise;
+}
+
+function handleWorkerMessage(pw: PoolWorker, msg: WorkerResponse) {
+  if (msg.type === "result") {
+    const p = pw.pending.get(msg.id);
+    if (p) {
+      pw.pending.delete(msg.id);
+      p.resolve(msg.data);
+    }
+  } else if (msg.type === "error" && msg.id !== "__init__") {
+    const p = pw.pending.get(msg.id);
+    if (p) {
+      pw.pending.delete(msg.id);
+      p.reject(new Error(msg.message));
+    }
+  }
+}
+
+/** Pick a worker (round-robin) and send a request. */
+function callWorker(request: WorkerRequest & { id: string }): Promise<string> {
+  if (!pool || pool.length === 0) {
+    return Promise.reject(new Error("Worker pool not initialized"));
+  }
+  const pw = pool[roundRobin % pool.length];
+  roundRobin++;
+
+  return new Promise<string>((resolve, reject) => {
+    pw.pending.set(request.id, { resolve, reject });
+    pw.worker.postMessage(request);
+  });
+}
+
+let callId = 0;
+function nextId(): string {
+  return String(++callId);
+}
+
+// ─── WASM-via-worker helpers (same API shape as direct WASM calls) ───
 
 export async function initWasm() {
-  if (wasm) return wasm;
-  const mod = await import("./wasm/nnnblast_wasm");
-  await mod.default();
-  wasm = mod;
-  return wasm;
+  await createPool();
+}
+
+async function wasmParseQuery(query: string): Promise<string> {
+  return callWorker({ type: "parse_query", id: nextId(), query });
+}
+
+async function wasmChooseStrategy(queryJson: string): Promise<string> {
+  return callWorker({ type: "choose_strategy", id: nextId(), queryJson });
+}
+
+async function wasmParseBlastXml(xml: string): Promise<string> {
+  return callWorker({ type: "parse_blast_xml", id: nextId(), xml });
+}
+
+async function wasmCheckRegion(
+  queryJson: string,
+  fasta: string,
+  accession: string,
+  description: string,
+  subjectLength: number,
+  paramsJson: string,
+): Promise<string> {
+  return callWorker({
+    type: "check_region",
+    id: nextId(),
+    queryJson,
+    fasta,
+    accession,
+    description,
+    subjectLength,
+    paramsJson,
+  });
+}
+
+async function wasmScoreHits(
+  hitsJson: string,
+  queryJson: string,
+  dbSize: number,
+  matchScore: number,
+  mismatchScore: number,
+  evalCutoff: number,
+): Promise<string> {
+  return callWorker({
+    type: "score_hits",
+    id: nextId(),
+    hitsJson,
+    queryJson,
+    dbSize,
+    matchScore,
+    mismatchScore,
+    evalCutoff,
+  });
 }
 
 // ─── Types ───
@@ -28,7 +178,6 @@ export async function initWasm() {
 const BLAST_URL = "https://blast.ncbi.nlm.nih.gov/blast/Blast.cgi";
 const EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi";
 const STORAGE_KEY = "nnnblast_active_job";
-// const MAX_JOBS_STORED = 3; // for future pruning
 
 export type Phase =
   | "blast_submitting"
@@ -53,7 +202,7 @@ export interface PersistedJob {
   updatedAt: string;
   phase: Phase;
   rid?: string;
-  blastHitsJson?: string; // JSON string (to save space)
+  blastHitsJson?: string;
   dbSize?: number;
   totalBlastHits?: number;
   uniqueAccessions?: number;
@@ -179,7 +328,6 @@ async function fetchWithRetry(
     try {
       const resp = await proxyFetch(proxyUrl, url, signal);
       if (resp.status === 429) {
-        // Rate limited — wait longer
         const delay = Math.min(60000, 1000 * Math.pow(2, attempt + 4));
         await sleep(delay);
         continue;
@@ -203,13 +351,13 @@ async function fetchWithRetry(
 // ─── Main search pipeline ───
 
 export async function searchWasm(params: WasmSearchParams): Promise<SearchResults> {
-  const w = await initWasm();
+  await initWasm();
   const job = params.resumeJob || createJob(params);
 
   if (!params.resumeJob) saveJob(job);
 
   try {
-    return await runPipeline(w, params, job);
+    return await runPipeline(params, job);
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") {
       job.phase = "cancelled";
@@ -225,7 +373,6 @@ export async function searchWasm(params: WasmSearchParams): Promise<SearchResult
 }
 
 async function runPipeline(
-  w: NonNullable<typeof wasm>,
   params: WasmSearchParams,
   job: PersistedJob,
 ): Promise<SearchResults> {
@@ -236,9 +383,9 @@ async function runPipeline(
     onProgress("submitting_blast");
     signal?.throwIfAborted();
 
-    const parseResult = w.parse_and_validate_query(params.query);
+    const parseResult = await wasmParseQuery(params.query);
     const parsed = JSON.parse(parseResult);
-    const strategyResult = w.choose_blast_strategy(JSON.stringify(parsed.query));
+    const strategyResult = await wasmChooseStrategy(JSON.stringify(parsed.query));
     const strategy = JSON.parse(strategyResult);
 
     const blastParams = new URLSearchParams({
@@ -299,8 +446,9 @@ async function runPipeline(
         throw new Error(`BLAST search failed or RID expired. RID: ${job.rid}`);
       }
 
-      // Parse results
-      const blastResult: BlastXmlParsed = JSON.parse(w.parse_blast_xml(pollText));
+      // Parse results (in worker)
+      const blastResultJson = await wasmParseBlastXml(pollText);
+      const blastResult: BlastXmlParsed = JSON.parse(blastResultJson);
       job.blastHitsJson = JSON.stringify(blastResult.hits);
       job.dbSize = blastResult.db_len;
       job.totalBlastHits = blastResult.hits.length;
@@ -336,7 +484,7 @@ async function runPipeline(
     }
 
     // Parse query for span calculation
-    const parseResult = w.parse_and_validate_query(params.query);
+    const parseResult = await wasmParseQuery(params.query);
     const parsed = JSON.parse(parseResult);
     const querySpan =
       parsed.query.motifs.reduce((s: number, m: { sequence: number[] }) => s + m.sequence.length, 0) +
@@ -384,7 +532,7 @@ async function runPipeline(
     );
   }
 
-  // ─── Phase: Fetch + check ───
+  // ─── Phase: Fetch + check (workers handle alignment in parallel) ───
   if (job.phase === "fetching") {
     const queue: AccessionGroup[] = (job.accessionQueue || []).map((s) => JSON.parse(s));
     const fetchedSet = new Set(job.fetchedAccessions);
@@ -400,7 +548,7 @@ async function runPipeline(
       mismatch_score: -3,
     });
 
-    const parseResult = w.parse_and_validate_query(params.query);
+    const parseResult = await wasmParseQuery(params.query);
     const parsed = JSON.parse(parseResult);
     const queryJson = JSON.stringify(parsed.query);
 
@@ -422,7 +570,8 @@ async function runPipeline(
             return [];
           }
           const fasta = await resp.text();
-          const hitsJson = w.check_motifs_in_region(
+          // WASM alignment runs in a Web Worker — no main thread blocking
+          const hitsJson = await wasmCheckRegion(
             queryJson,
             fasta,
             group.accession,
@@ -473,10 +622,10 @@ async function runPipeline(
     onProgress("analyzing");
     signal?.throwIfAborted();
 
-    const parseResult = w.parse_and_validate_query(params.query);
+    const parseResult = await wasmParseQuery(params.query);
     const parsed = JSON.parse(parseResult);
 
-    const scoredJson = w.score_hits(
+    const scoredJson = await wasmScoreHits(
       JSON.stringify(job.partialHits),
       JSON.stringify(parsed.query),
       job.dbSize || 0,
