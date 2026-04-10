@@ -106,7 +106,7 @@ pub fn parse_blast_xml(xml: &str) -> Result<String, JsError> {
     let mut buf = Vec::new();
 
     let mut hits: Vec<BlastHitJs> = Vec::new();
-    let mut db_len: usize = 0;
+    let mut db_len: u64 = 0;
 
     let mut in_hit = false;
     let mut in_hsp = false;
@@ -215,7 +215,7 @@ struct BlastHitJs {
 #[derive(Serialize)]
 struct BlastXmlResult {
     hits: Vec<BlastHitJs>,
-    db_len: usize,
+    db_len: u64,
 }
 
 // ─── Fetch Region Planning ───
@@ -265,6 +265,7 @@ struct FetchPlanResult {
 /// Check all motifs in a fetched region. Returns JSON array of structured hits.
 /// `query_json`: JSON of StructuredQuery
 /// `region_fasta`: raw FASTA text from Efetch
+/// `fetch_start`/`fetch_end`: 1-based genomic coordinates of the fetched region
 /// `params_json`: JSON with max_mismatches, match_score, mismatch_score
 #[wasm_bindgen]
 pub fn check_motifs_in_region(
@@ -273,6 +274,8 @@ pub fn check_motifs_in_region(
     accession: &str,
     description: &str,
     subject_length: usize,
+    fetch_start: usize,
+    fetch_end: usize,
     params_json: &str,
 ) -> Result<String, JsError> {
     let query: StructuredQuery =
@@ -293,10 +296,12 @@ pub fn check_motifs_in_region(
     let rc = reverse_complement(&region);
     hits.extend(search_strand(accession, &rc, '-', &query, &params, anchor_idx));
 
-    // Set metadata
+    // Set metadata and genomic coordinates
     for hit in &mut hits {
         hit.description = description.to_string();
         hit.subject_length = subject_length;
+        hit.genomic_start = fetch_start;
+        hit.genomic_end = fetch_end;
     }
 
     Ok(serde_json::to_string(&hits).unwrap())
@@ -408,11 +413,13 @@ fn extend_from_anchor(
 // ─── E-value Scoring ───
 
 /// Compute E-values for a JSON array of hits. Returns scored JSON.
+/// `db_size` is passed as f64 because wasm_bindgen doesn't support u64 params,
+/// and NCBI database sizes (e.g. 991 billion) overflow u32/usize on WASM32.
 #[wasm_bindgen]
 pub fn score_hits(
     hits_json: &str,
     query_json: &str,
-    db_size: usize,
+    db_size: f64,
     match_score: i32,
     mismatch_score: i32,
     evalue_cutoff: f64,
@@ -423,11 +430,12 @@ pub fn score_hits(
         serde_json::from_str(query_json).map_err(|e| JsError::new(&e.to_string()))?;
 
     let base_freqs = [0.25f64; 4];
+    let db_size_u64 = db_size as u64;
 
     for hit in &mut hits {
         let motif_scores: Vec<i32> = hit.motif_alignments.iter().map(|ma| ma.score).collect();
         hit.evalue = compute_evalue(
-            &query, &motif_scores, db_size, 1,
+            &query, &motif_scores, db_size_u64, 1,
             match_score, mismatch_score, &base_freqs,
         );
         hit.bit_score = raw_to_bit_score(hit.total_score);
@@ -436,11 +444,17 @@ pub fn score_hits(
     hits.retain(|h| h.evalue <= evalue_cutoff);
     hits.sort_by(|a, b| a.evalue.total_cmp(&b.evalue));
 
-    // Deduplicate
+    // Deduplicate by absolute genomic coordinate
     let mut seen = std::collections::HashSet::new();
     hits.retain(|hit| {
-        let first_start = hit.motif_alignments.first().map(|a| a.subject_start).unwrap_or(0);
-        let key = format!("{}:{}:{}", hit.subject_id, hit.strand, first_start / 10);
+        let abs_pos = hit.motif_alignments.first().map(|a| {
+            if hit.strand == '+' {
+                hit.genomic_start + a.subject_start
+            } else {
+                hit.genomic_end.saturating_sub(a.subject_start)
+            }
+        }).unwrap_or(0);
+        let key = format!("{}:{}:{}", hit.subject_id, hit.strand, abs_pos / 10);
         seen.insert(key)
     });
 

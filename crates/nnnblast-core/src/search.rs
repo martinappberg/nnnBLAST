@@ -440,7 +440,7 @@ pub fn search_local(db: &Database, params: &SearchParams) -> SearchResults {
                 query,
                 &motif_scores,
                 db.total_bases,
-                db.sequences.len(),
+                db.sequences.len() as u64,
                 params.match_score,
                 params.mismatch_score,
                 &base_freqs,

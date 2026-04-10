@@ -40,6 +40,8 @@ export type WorkerRequest =
       accession: string;
       description: string;
       subjectLength: number;
+      fetchStart: number;
+      fetchEnd: number;
       paramsJson: string;
     }
   | {
@@ -116,6 +118,8 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
           msg.accession,
           msg.description,
           msg.subjectLength,
+          msg.fetchStart,
+          msg.fetchEnd,
           msg.paramsJson,
         );
         break;

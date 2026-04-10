@@ -139,6 +139,8 @@ async function wasmCheckRegion(
   accession: string,
   description: string,
   subjectLength: number,
+  fetchStart: number,
+  fetchEnd: number,
   paramsJson: string,
 ): Promise<string> {
   return callWorker({
@@ -149,6 +151,8 @@ async function wasmCheckRegion(
     accession,
     description,
     subjectLength,
+    fetchStart,
+    fetchEnd,
     paramsJson,
   });
 }
@@ -582,6 +586,8 @@ async function runPipeline(
             group.accession,
             group.description,
             group.subject_length,
+            group.fetch_start,
+            group.fetch_end,
             searchParams,
           );
           return JSON.parse(hitsJson) as Hit[];

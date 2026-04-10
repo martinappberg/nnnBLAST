@@ -141,7 +141,7 @@ pub struct SubjectSequence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResults {
     pub hits: Vec<Hit>,
-    pub database_size: usize,
+    pub database_size: u64,
     pub num_sequences: usize,
     pub query_info: String,
 }

@@ -84,12 +84,12 @@ pub async fn submit_blast(
     Ok(rid)
 }
 
-/// Poll NCBI BLAST for results. Returns parsed hits and database size.
+/// Poll NCBI BLAST for results. Returns parsed hits and database size (in bases).
 pub async fn poll_blast_results(
     client: &reqwest::Client,
     rid: &str,
     api_key: Option<&str>,
-) -> Result<(Vec<BlastHit>, usize), NcbiError> {
+) -> Result<(Vec<BlastHit>, u64), NcbiError> {
     let start = tokio::time::Instant::now();
 
     loop {
@@ -187,7 +187,7 @@ fn extract_value(text: &str, key: &str) -> Option<String> {
 }
 
 /// Parse BLAST XML output to extract hits and database size.
-fn parse_blast_xml(xml: &str) -> Result<(Vec<BlastHit>, usize), NcbiError> {
+fn parse_blast_xml(xml: &str) -> Result<(Vec<BlastHit>, u64), NcbiError> {
     use quick_xml::events::Event;
     use quick_xml::reader::Reader;
 
@@ -202,7 +202,7 @@ fn parse_blast_xml(xml: &str) -> Result<(Vec<BlastHit>, usize), NcbiError> {
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
     let mut hits = Vec::new();
-    let mut db_len: usize = 0;
+    let mut db_len: u64 = 0;
 
     // State for parsing — track the tag we're about to read text for
     let mut in_hit = false;
