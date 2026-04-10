@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Routes, Route, Link, useSearchParams } from "react-router-dom";
 import { submitSearch, getResults, isServerMode } from "./api";
-import { searchWasm } from "./search";
+import { searchWasm, loadPersistedJob, clearPersistedJob, type PersistedJob } from "./search";
 import { QueryVisual } from "./components/QueryVisual";
 import { ResultsTable } from "./components/ResultsTable";
 import { HelpPanel } from "./components/HelpPanel";
@@ -59,13 +59,27 @@ function SearchPage() {
   const [email, setEmail] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [evalCutoff, setEvalCutoff] = useState(10);
+  const [maxAccessions, setMaxAccessions] = useState(1000);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResults | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [pollCount, setPollCount] = useState(0);
+  const [resumableJob, setResumableJob] = useState<PersistedJob | null>(null);
   const pollRef = useRef<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Check for resumable job on mount
+  useEffect(() => {
+    const saved = loadPersistedJob();
+    if (saved && (saved.phase === "fetching" || saved.phase === "blast_polling" || saved.phase === "error")) {
+      setResumableJob(saved);
+    } else if (saved && saved.phase === "complete" && saved.results) {
+      setResults(saved.results);
+      setQuery(saved.query);
+    }
+  }, []);
   const timerRef = useRef<number | null>(null);
 
   // Elapsed time ticker (1s interval while loading)
@@ -132,21 +146,24 @@ function SearchPage() {
 
   const queryWarnings = validateQuery(query);
 
-  const handleSearch = useCallback(async () => {
-    if (!email.trim()) {
+  const runSearch = useCallback(async (resumeJob?: PersistedJob) => {
+    if (!resumeJob && !email.trim()) {
       setError("Email is required (NCBI policy).");
       return;
     }
     setLoading(true);
     setError(null);
     setResults(null);
+    setResumableJob(null);
     setProgress({ stage: "starting" });
     setElapsed(0);
     setPollCount(0);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      if (isServerMode()) {
-        // Server mode: use Rust backend API
+      if (isServerMode() && !resumeJob) {
         const { job_id } = await submitSearch({
           query,
           database,
@@ -155,7 +172,6 @@ function SearchPage() {
           max_mismatches: 2,
           evalue_cutoff: evalCutoff,
         });
-
         const poll = async () => {
           try {
             const res = await getResults(job_id);
@@ -180,32 +196,81 @@ function SearchPage() {
         };
         poll();
       } else {
-        // WASM mode: run entirely in browser via Cloudflare proxy
-        const results = await searchWasm({
-          query,
-          database,
-          email,
-          apiKey: apiKey || undefined,
-          evalCutoff,
+        const searchResults = await searchWasm({
+          query: resumeJob?.query || query,
+          database: resumeJob?.database || database,
+          email: resumeJob?.email || email,
+          apiKey: resumeJob?.apiKey || apiKey || undefined,
+          evalCutoff: resumeJob?.evalCutoff || evalCutoff,
+          maxAccessions: resumeJob?.maxAccessions || maxAccessions,
           proxyUrl: PROXY_URL,
           onProgress: (stage, detail) => {
             setProgress({ stage, detail: detail ?? undefined });
             setPollCount((c) => c + 1);
           },
+          signal: controller.signal,
+          resumeJob,
         });
-        setResults(results);
+        setResults(searchResults);
         setProgress(null);
         setLoading(false);
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
       setProgress(null);
       setLoading(false);
     }
-  }, [query, database, email, apiKey, evalCutoff]);
+  }, [query, database, email, apiKey, evalCutoff, maxAccessions]);
+
+  const handleSearch = useCallback(() => runSearch(), [runSearch]);
+  const handleResume = useCallback((job: PersistedJob) => runSearch(job), [runSearch]);
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+  const handleDiscard = useCallback(() => {
+    clearPersistedJob();
+    setResumableJob(null);
+  }, []);
 
   return (
     <main className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+      {/* Resume banner */}
+      {resumableJob && !loading && (
+        <section className="bg-[#FFF7ED] border border-[#F9A8B8]/40 rounded-2xl p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-medium text-[#1C1917]">
+                Unfinished search from {new Date(resumableJob.startedAt).toLocaleString()}
+              </div>
+              <div className="text-sm text-[#57534E] mt-0.5">
+                {resumableJob.phase === "fetching"
+                  ? `${resumableJob.fetchedAccessions.length}/${resumableJob.accessionQueue?.length ?? "?"} accessions fetched. ${resumableJob.partialHits.length} hits found so far.`
+                  : resumableJob.phase === "blast_polling"
+                    ? `Waiting for BLAST results (RID: ${resumableJob.rid})`
+                    : resumableJob.phase === "error"
+                      ? `Failed during ${resumableJob.errorPhase}: ${resumableJob.error}`
+                      : `Phase: ${resumableJob.phase}`}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                className="px-4 py-2 rounded-xl text-sm font-medium bg-[#F9A8B8] text-[#1C1917] hover:bg-[#F48BA0] transition-colors"
+                onClick={() => handleResume(resumableJob)}
+              >
+                Resume
+              </button>
+              <button
+                className="px-4 py-2 rounded-xl text-sm text-[#A8A29E] hover:text-[#D7827E] transition-colors"
+                onClick={handleDiscard}
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Query section */}
       <section className="bg-white rounded-2xl shadow-sm border border-[#FECDD3]/50 p-6 space-y-4">
         <div className="flex items-center justify-between">
@@ -332,9 +397,27 @@ function SearchPage() {
               placeholder="Optional"
             />
           </div>
+
+          {/* Max accessions to process */}
+          <div>
+            <label className="block text-xs font-medium text-[#57534E] mb-1">
+              Max accessions to process
+            </label>
+            <select
+              className="w-full border border-[#FECDD3]/50 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-[#F9A8B8] outline-none"
+              value={maxAccessions}
+              onChange={(e) => setMaxAccessions(Number(e.target.value))}
+            >
+              <option value={100}>100</option>
+              <option value={500}>500</option>
+              <option value={1000}>1,000</option>
+              <option value={5000}>5,000</option>
+              <option value={0}>All (no limit)</option>
+            </select>
+          </div>
         </div>
 
-        <div className="mt-5">
+        <div className="mt-5 flex items-center gap-3">
           <button
             className="bg-[#F9A8B8] text-[#1C1917] px-8 py-2.5 rounded-xl font-semibold hover:bg-[#F48BA0] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
             onClick={handleSearch}
@@ -342,6 +425,14 @@ function SearchPage() {
           >
             {loading ? "Searching..." : "Search NCBI"}
           </button>
+          {loading && (
+            <button
+              className="px-4 py-2.5 rounded-xl text-sm text-[#D7827E] border border-[#D7827E]/30 hover:bg-[#D7827E]/10 transition-colors"
+              onClick={handleCancel}
+            >
+              Cancel
+            </button>
+          )}
         </div>
       </section>
 

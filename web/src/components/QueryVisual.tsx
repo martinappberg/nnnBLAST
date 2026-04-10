@@ -14,29 +14,9 @@ export function QueryVisual({ query }: { query: string }) {
               style={{
                 backgroundColor: COLORS[part.colorIdx % COLORS.length],
               }}
-              title={
-                part.mm !== undefined
-                  ? `max ${part.mm} mismatches`
-                  : undefined
-              }
+              title={part.text + (part.mm !== undefined ? ` (max ${part.mm} mismatches)` : "")}
             >
-              {part.text.split("").map((ch, j) => {
-                if (ch === "X") {
-                  return (
-                    <span
-                      key={j}
-                      className="opacity-70"
-                      style={{
-                        textDecoration: "underline dotted",
-                        textUnderlineOffset: "3px",
-                      }}
-                    >
-                      X
-                    </span>
-                  );
-                }
-                return <span key={j}>{ch}</span>;
-              })}
+              <MotifDisplay text={part.text} />
               {part.mm !== undefined && (
                 <span className="ml-1 text-xs opacity-75">({part.mm}mm)</span>
               )}
@@ -73,6 +53,40 @@ export function QueryVisual({ query }: { query: string }) {
         );
       })}
     </div>
+  );
+}
+
+const TRUNCATE_THRESHOLD = 30;
+const SHOW_CHARS = 10; // chars to show on each end
+
+/** Renders a motif sequence, truncating if >30 chars. X positions get dotted underline. */
+function MotifDisplay({ text }: { text: string }) {
+  if (text.length <= TRUNCATE_THRESHOLD) {
+    return (
+      <>
+        {text.split("").map((ch, j) => (
+          <span
+            key={j}
+            className={ch === "X" ? "opacity-70" : ""}
+            style={ch === "X" ? { textDecoration: "underline dotted", textUnderlineOffset: "3px" } : undefined}
+          >
+            {ch}
+          </span>
+        ))}
+      </>
+    );
+  }
+
+  const start = text.slice(0, SHOW_CHARS);
+  const end = text.slice(-SHOW_CHARS);
+  const middle = text.length - 2 * SHOW_CHARS;
+
+  return (
+    <>
+      {start}
+      <span className="opacity-60 text-xs mx-0.5">..+{middle}..</span>
+      {end}
+    </>
   );
 }
 

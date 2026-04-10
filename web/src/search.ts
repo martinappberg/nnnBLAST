@@ -1,25 +1,72 @@
 /**
- * Browser-side nnnBLAST search pipeline.
- *
- * Orchestrates: WASM (parsing, alignment, scoring) + NCBI (BLAST, Efetch via CORS proxy).
- * This replaces the Rust server for static-site deployment.
+ * Browser-side nnnBLAST search pipeline with:
+ * - Accession deduplication (fetch each accession once)
+ * - Adaptive concurrency (3 without API key, 10 with)
+ * - User-controlled processing limits
+ * - localStorage persistence & checkpoint/resume
+ * - Per-fetch retry with exponential backoff
+ * - AbortController cancellation
+ * - Clear error messages for every failure mode
  */
 
 import type { SearchResults, Hit } from "./types";
 
-// WASM module — loaded dynamically
+// ─── WASM module ───
+
 let wasm: typeof import("./wasm/nnnblast_wasm") | null = null;
 
 export async function initWasm() {
   if (wasm) return wasm;
   const mod = await import("./wasm/nnnblast_wasm");
-  await mod.default(); // initialize WASM
+  await mod.default();
   wasm = mod;
   return wasm;
 }
 
+// ─── Types ───
+
 const BLAST_URL = "https://blast.ncbi.nlm.nih.gov/blast/Blast.cgi";
 const EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi";
+const STORAGE_KEY = "nnnblast_active_job";
+// const MAX_JOBS_STORED = 3; // for future pruning
+
+export type Phase =
+  | "blast_submitting"
+  | "blast_polling"
+  | "blast_done"
+  | "deduplicating"
+  | "fetching"
+  | "scoring"
+  | "complete"
+  | "error"
+  | "cancelled";
+
+export interface PersistedJob {
+  id: string;
+  query: string;
+  database: string;
+  email: string;
+  apiKey?: string;
+  evalCutoff: number;
+  maxAccessions: number;
+  startedAt: string;
+  updatedAt: string;
+  phase: Phase;
+  rid?: string;
+  blastHitsJson?: string; // JSON string (to save space)
+  dbSize?: number;
+  totalBlastHits?: number;
+  uniqueAccessions?: number;
+  cappedAt?: number;
+  accessionQueue?: string[];
+  fetchedAccessions: string[];
+  failedAccessions: string[];
+  partialHits: Hit[];
+  results?: SearchResults;
+  error?: string;
+  errorPhase?: string;
+  retryCount: number;
+}
 
 export interface WasmSearchParams {
   query: string;
@@ -27,8 +74,11 @@ export interface WasmSearchParams {
   email: string;
   apiKey?: string;
   evalCutoff: number;
-  proxyUrl: string; // Cloudflare Worker URL
+  maxAccessions: number;
+  proxyUrl: string;
   onProgress: (stage: string, detail?: string) => void;
+  signal?: AbortSignal;
+  resumeJob?: PersistedJob;
 }
 
 interface BlastHitParsed {
@@ -47,172 +97,424 @@ interface BlastXmlParsed {
   db_len: number;
 }
 
-function proxyFetch(proxyUrl: string, targetUrl: string, options?: RequestInit): Promise<Response> {
-  const proxied = `${proxyUrl}?url=${encodeURIComponent(targetUrl)}`;
-  return fetch(proxied, options);
+interface AccessionGroup {
+  accession: string;
+  description: string;
+  subject_length: number;
+  fetchStart: number;
+  fetchEnd: number;
+  bestScore: number;
 }
 
-/**
- * Full browser-side search pipeline.
- */
+// ─── Persistence helpers ───
+
+export function loadPersistedJob(): PersistedJob | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveJob(job: PersistedJob) {
+  try {
+    job.updatedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(job));
+  } catch {
+    // localStorage full — continue without persistence
+  }
+}
+
+export function clearPersistedJob() {
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+function createJob(params: WasmSearchParams): PersistedJob {
+  return {
+    id: crypto.randomUUID(),
+    query: params.query,
+    database: params.database,
+    email: params.email,
+    apiKey: params.apiKey,
+    evalCutoff: params.evalCutoff,
+    maxAccessions: params.maxAccessions,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    phase: "blast_submitting",
+    fetchedAccessions: [],
+    failedAccessions: [],
+    partialHits: [],
+    retryCount: 0,
+  };
+}
+
+// ─── Network helpers ───
+
+function proxyFetch(
+  proxyUrl: string,
+  targetUrl: string,
+  signal?: AbortSignal,
+  method: string = "GET",
+): Promise<Response> {
+  const proxied = `${proxyUrl}?url=${encodeURIComponent(targetUrl)}`;
+  return fetch(proxied, { method, signal });
+}
+
+function appendApiKey(url: string, apiKey?: string): string {
+  if (apiKey) return `${url}&api_key=${apiKey}`;
+  return url;
+}
+
+async function fetchWithRetry(
+  proxyUrl: string,
+  url: string,
+  signal?: AbortSignal,
+  maxRetries = 3,
+): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    try {
+      const resp = await proxyFetch(proxyUrl, url, signal);
+      if (resp.status === 429) {
+        // Rate limited — wait longer
+        const delay = Math.min(60000, 1000 * Math.pow(2, attempt + 4));
+        await sleep(delay);
+        continue;
+      }
+      if (resp.status >= 500 && attempt < maxRetries) {
+        await sleep(1000 * Math.pow(2, attempt));
+        continue;
+      }
+      return resp;
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      lastError = e instanceof Error ? e : new Error(String(e));
+      if (attempt < maxRetries) {
+        await sleep(1000 * Math.pow(2, attempt));
+      }
+    }
+  }
+  throw lastError || new Error("Fetch failed after retries");
+}
+
+// ─── Main search pipeline ───
+
 export async function searchWasm(params: WasmSearchParams): Promise<SearchResults> {
   const w = await initWasm();
-  const { onProgress } = params;
+  const job = params.resumeJob || createJob(params);
 
-  // Step 1: Parse query (WASM)
-  onProgress("parsing");
-  const parseResult = w.parse_and_validate_query(params.query);
-  const parsed = JSON.parse(parseResult);
+  if (!params.resumeJob) saveJob(job);
 
-  // Step 2: Choose BLAST strategy (WASM)
-  const strategyResult = w.choose_blast_strategy(JSON.stringify(parsed.query));
-  const strategy = JSON.parse(strategyResult);
+  try {
+    return await runPipeline(w, params, job);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      job.phase = "cancelled";
+      saveJob(job);
+      throw new Error("Search cancelled. Your progress is saved — you can resume later.");
+    }
+    job.phase = "error";
+    job.error = e instanceof Error ? e.message : String(e);
+    job.errorPhase = job.phase;
+    saveJob(job);
+    throw e;
+  }
+}
 
-  // Step 3: Submit BLAST via proxy
-  onProgress("submitting_blast", `Anchor: ${strategy.blast_query} (${strategy.blast_query.length}bp)`);
+async function runPipeline(
+  w: NonNullable<typeof wasm>,
+  params: WasmSearchParams,
+  job: PersistedJob,
+): Promise<SearchResults> {
+  const { onProgress, signal, proxyUrl } = params;
 
-  const blastParams = new URLSearchParams({
-    CMD: "Put",
-    PROGRAM: "blastn",
-    DATABASE: params.database,
-    QUERY: strategy.blast_query,
-    EXPECT: "100000",
-    HITLIST_SIZE: "500",
-    MEGABLAST: "no",
-    WORD_SIZE: strategy.blast_query.length < 30 ? "7" : "11",
-    FILTER: "F",
-    TOOL: "nnnblast",
-    EMAIL: params.email,
-    FORMAT_TYPE: "XML",
-  });
+  // ─── Phase: BLAST submission ───
+  if (job.phase === "blast_submitting") {
+    onProgress("submitting_blast");
+    signal?.throwIfAborted();
 
-  const submitResp = await proxyFetch(
-    params.proxyUrl,
-    `${BLAST_URL}?${blastParams.toString()}`
-  );
-  const submitText = await submitResp.text();
+    const parseResult = w.parse_and_validate_query(params.query);
+    const parsed = JSON.parse(parseResult);
+    const strategyResult = w.choose_blast_strategy(JSON.stringify(parsed.query));
+    const strategy = JSON.parse(strategyResult);
 
-  const ridMatch = submitText.match(/RID = (\S+)/);
-  if (!ridMatch) throw new Error("Failed to get BLAST RID");
-  const rid = ridMatch[1];
+    const blastParams = new URLSearchParams({
+      CMD: "Put",
+      PROGRAM: "blastn",
+      DATABASE: params.database,
+      QUERY: strategy.blast_query,
+      EXPECT: "100000",
+      HITLIST_SIZE: "500",
+      MEGABLAST: "no",
+      WORD_SIZE: strategy.blast_query.length < 30 ? "7" : "11",
+      FILTER: "F",
+      TOOL: "nnnblast",
+      EMAIL: params.email,
+      FORMAT_TYPE: "XML",
+    });
+    if (params.apiKey) blastParams.set("api_key", params.apiKey);
 
-  // Step 4: Poll for BLAST results
-  onProgress("waiting_for_blast", `RID: ${rid}`);
-
-  let blastXml = "";
-  const maxWait = 600_000; // 10 min
-  const pollInterval = 5_000;
-  const start = Date.now();
-
-  while (Date.now() - start < maxWait) {
-    await sleep(pollInterval);
-
-    const pollResp = await proxyFetch(
-      params.proxyUrl,
-      `${BLAST_URL}?CMD=Get&RID=${rid}&FORMAT_TYPE=XML`
+    onProgress("submitting_blast", `Anchor: ${strategy.blast_query.length}bp`);
+    const submitResp = await proxyFetch(
+      proxyUrl,
+      `${BLAST_URL}?${blastParams.toString()}`,
+      signal,
     );
-    const pollText = await pollResp.text();
-
-    if (pollText.includes("Status=WAITING")) {
-      onProgress("waiting_for_blast", `RID: ${rid}`);
-      continue;
-    }
-    if (pollText.includes("Status=FAILED") || pollText.includes("Status=UNKNOWN")) {
-      throw new Error("BLAST search failed or RID expired");
-    }
-
-    blastXml = pollText;
-    break;
+    const submitText = await submitResp.text();
+    const ridMatch = submitText.match(/RID = (\S+)/);
+    if (!ridMatch) throw new Error("Failed to get BLAST RID from NCBI. Response may be malformed.");
+    job.rid = ridMatch[1];
+    job.phase = "blast_polling";
+    saveJob(job);
   }
 
-  if (!blastXml) throw new Error("BLAST timeout");
+  // ─── Phase: BLAST polling ───
+  if (job.phase === "blast_polling") {
+    if (!job.rid) throw new Error("No RID saved — cannot poll. Please start a new search.");
+    onProgress("waiting_for_blast", `RID: ${job.rid}`);
 
-  // Step 5: Parse BLAST XML (WASM)
-  const blastResult: BlastXmlParsed = JSON.parse(w.parse_blast_xml(blastXml));
+    const maxWait = 600_000;
+    const start = Date.now();
 
-  if (blastResult.hits.length === 0) {
-    return {
-      hits: [],
-      database_size: blastResult.db_len,
-      num_sequences: 0,
-      query_info: "0 BLAST hits",
-    };
+    while (Date.now() - start < maxWait) {
+      signal?.throwIfAborted();
+      await sleep(5000);
+
+      const pollUrl = appendApiKey(
+        `${BLAST_URL}?CMD=Get&RID=${job.rid}&FORMAT_TYPE=XML`,
+        params.apiKey,
+      );
+      const pollResp = await fetchWithRetry(proxyUrl, pollUrl, signal);
+      const pollText = await pollResp.text();
+
+      if (pollText.includes("Status=WAITING")) {
+        const elapsed = Math.round((Date.now() - start) / 1000);
+        onProgress("waiting_for_blast", `RID: ${job.rid} (${elapsed}s)`);
+        continue;
+      }
+      if (pollText.includes("Status=FAILED") || pollText.includes("Status=UNKNOWN")) {
+        throw new Error(`BLAST search failed or RID expired. RID: ${job.rid}`);
+      }
+
+      // Parse results
+      const blastResult: BlastXmlParsed = JSON.parse(w.parse_blast_xml(pollText));
+      job.blastHitsJson = JSON.stringify(blastResult.hits);
+      job.dbSize = blastResult.db_len;
+      job.totalBlastHits = blastResult.hits.length;
+      job.phase = "blast_done";
+      saveJob(job);
+      break;
+    }
+
+    if (job.phase === "blast_polling") {
+      throw new Error(`BLAST timeout after 10 minutes. RID: ${job.rid}. NCBI may be busy — try resuming later.`);
+    }
   }
 
-  // Step 6: Fetch regions and check motifs
-  const totalHits = blastResult.hits.length;
-  const querySpan =
-    parsed.query.motifs.reduce((s: number, m: { sequence: number[] }) => s + m.sequence.length, 0) +
-    parsed.query.gaps.reduce((s: number, g: { max: number }) => s + g.max, 0);
-  const padding = querySpan + 50;
+  // ─── Phase: Dedup ───
+  if (job.phase === "blast_done" || job.phase === "deduplicating") {
+    job.phase = "deduplicating";
+    onProgress("deduplicating", `${job.totalBlastHits} BLAST hits`);
+    signal?.throwIfAborted();
 
-  const searchParams = JSON.stringify({
-    max_mismatches: 2,
-    match_score: 2,
-    mismatch_score: -3,
-  });
+    const blastHits: BlastHitParsed[] = JSON.parse(job.blastHitsJson || "[]");
 
-  const allHits: Hit[] = [];
-  const concurrency = 3;
-  let completed = 0;
+    if (blastHits.length === 0) {
+      job.phase = "complete";
+      job.results = {
+        hits: [],
+        database_size: job.dbSize || 0,
+        num_sequences: 0,
+        query_info: "0 BLAST hits",
+      };
+      saveJob(job);
+      clearPersistedJob();
+      return job.results;
+    }
 
-  // Process in batches
-  for (let i = 0; i < totalHits; i += concurrency) {
-    const batch = blastResult.hits.slice(i, i + concurrency);
-    const promises = batch.map(async (hit) => {
+    // Parse query for span calculation
+    const parseResult = w.parse_and_validate_query(params.query);
+    const parsed = JSON.parse(parseResult);
+    const querySpan =
+      parsed.query.motifs.reduce((s: number, m: { sequence: number[] }) => s + m.sequence.length, 0) +
+      parsed.query.gaps.reduce((s: number, g: { max: number }) => s + g.max, 0);
+    const padding = querySpan + 50;
+
+    // Group by accession, compute widest fetch window
+    const groups = new Map<string, AccessionGroup>();
+    for (const hit of blastHits) {
       const fetchStart = Math.max(1, hit.hit_from - padding);
       const fetchEnd = hit.hit_to + padding;
-
-      try {
-        const efetchUrl = `${EFETCH_URL}?db=nuccore&id=${hit.accession}&rettype=fasta&retmode=text&seq_start=${fetchStart}&seq_stop=${fetchEnd}`;
-        const resp = await proxyFetch(params.proxyUrl, efetchUrl);
-        const fasta = await resp.text();
-
-        const hitsJson = w.check_motifs_in_region(
-          JSON.stringify(parsed.query),
-          fasta,
-          hit.accession,
-          hit.description,
-          hit.subject_length,
-          searchParams,
-        );
-        return JSON.parse(hitsJson) as Hit[];
-      } catch {
-        return [] as Hit[];
+      const existing = groups.get(hit.accession);
+      if (existing) {
+        existing.fetchStart = Math.min(existing.fetchStart, fetchStart);
+        existing.fetchEnd = Math.max(existing.fetchEnd, fetchEnd);
+        existing.bestScore = Math.max(existing.bestScore, hit.score);
+      } else {
+        groups.set(hit.accession, {
+          accession: hit.accession,
+          description: hit.description,
+          subject_length: hit.subject_length,
+          fetchStart,
+          fetchEnd,
+          bestScore: hit.score,
+        });
       }
-    });
-
-    const batchResults = await Promise.all(promises);
-    for (const hits of batchResults) {
-      allHits.push(...hits);
     }
-    completed += batch.length;
-    onProgress("fetching_regions", `${completed}/${totalHits}`);
 
-    // Rate limit
-    if (i + concurrency < totalHits) {
-      await sleep(350);
+    // Sort by best BLAST score, cap if needed
+    let sorted = [...groups.values()].sort((a, b) => b.bestScore - a.bestScore);
+    job.uniqueAccessions = sorted.length;
+
+    if (params.maxAccessions > 0 && sorted.length > params.maxAccessions) {
+      job.cappedAt = params.maxAccessions;
+      sorted = sorted.slice(0, params.maxAccessions);
     }
+
+    job.accessionQueue = sorted.map((g) => JSON.stringify(g));
+    job.phase = "fetching";
+    saveJob(job);
+
+    onProgress(
+      "deduplicating",
+      `${blastHits.length} hits → ${sorted.length} unique accessions${job.cappedAt ? ` (top ${job.cappedAt})` : ""}`,
+    );
   }
 
-  // Step 7: Score (WASM)
-  onProgress("analyzing");
-  const scoredJson = w.score_hits(
-    JSON.stringify(allHits),
-    JSON.stringify(parsed.query),
-    blastResult.db_len,
-    2,  // match_score
-    -3, // mismatch_score
-    params.evalCutoff,
-  );
-  const scoredHits: Hit[] = JSON.parse(scoredJson);
+  // ─── Phase: Fetch + check ───
+  if (job.phase === "fetching") {
+    const queue: AccessionGroup[] = (job.accessionQueue || []).map((s) => JSON.parse(s));
+    const fetchedSet = new Set(job.fetchedAccessions);
+    const remaining = queue.filter((g) => !fetchedSet.has(g.accession));
+    const total = queue.length;
 
-  return {
-    hits: scoredHits,
-    database_size: blastResult.db_len,
-    num_sequences: totalHits,
-    query_info: `${parsed.query.motifs.length} motifs, ${parsed.query.gaps.length} gaps, ${totalHits} BLAST candidates, ${scoredHits.length} structured hits`,
-  };
+    const concurrency = params.apiKey ? 10 : 3;
+    const delay = params.apiKey ? 100 : 350;
+
+    const searchParams = JSON.stringify({
+      max_mismatches: 2,
+      match_score: 2,
+      mismatch_score: -3,
+    });
+
+    const parseResult = w.parse_and_validate_query(params.query);
+    const parsed = JSON.parse(parseResult);
+    const queryJson = JSON.stringify(parsed.query);
+
+    let checkpointCounter = 0;
+
+    for (let i = 0; i < remaining.length; i += concurrency) {
+      signal?.throwIfAborted();
+      const batch = remaining.slice(i, i + concurrency);
+
+      const promises = batch.map(async (group) => {
+        const efetchUrl = appendApiKey(
+          `${EFETCH_URL}?db=nuccore&id=${group.accession}&rettype=fasta&retmode=text&seq_start=${group.fetchStart}&seq_stop=${group.fetchEnd}`,
+          params.apiKey,
+        );
+        try {
+          const resp = await fetchWithRetry(proxyUrl, efetchUrl, signal);
+          if (!resp.ok) {
+            job.failedAccessions.push(group.accession);
+            return [];
+          }
+          const fasta = await resp.text();
+          const hitsJson = w.check_motifs_in_region(
+            queryJson,
+            fasta,
+            group.accession,
+            group.description,
+            group.subject_length,
+            searchParams,
+          );
+          return JSON.parse(hitsJson) as Hit[];
+        } catch (e) {
+          if (e instanceof DOMException && e.name === "AbortError") throw e;
+          job.failedAccessions.push(group.accession);
+          return [];
+        }
+      });
+
+      const batchResults = await Promise.all(promises);
+      for (const group of batch) {
+        job.fetchedAccessions.push(group.accession);
+      }
+      for (const hits of batchResults) {
+        job.partialHits.push(...hits);
+      }
+
+      checkpointCounter += batch.length;
+      const done = job.fetchedAccessions.length;
+      const pct = Math.round((done / total) * 100);
+      const failCount = job.failedAccessions.length;
+      const detail = `${done}/${total} accessions (${pct}%)${failCount > 0 ? ` — ${failCount} failed` : ""}`;
+      onProgress("fetching_regions", detail);
+
+      // Checkpoint every 10 batches
+      if (checkpointCounter >= 10) {
+        saveJob(job);
+        checkpointCounter = 0;
+      }
+
+      if (i + concurrency < remaining.length) {
+        await sleep(delay);
+      }
+    }
+
+    job.phase = "scoring";
+    saveJob(job);
+  }
+
+  // ─── Phase: Score ───
+  if (job.phase === "scoring") {
+    onProgress("analyzing");
+    signal?.throwIfAborted();
+
+    const parseResult = w.parse_and_validate_query(params.query);
+    const parsed = JSON.parse(parseResult);
+
+    const scoredJson = w.score_hits(
+      JSON.stringify(job.partialHits),
+      JSON.stringify(parsed.query),
+      job.dbSize || 0,
+      2,
+      -3,
+      params.evalCutoff,
+    );
+    const scoredHits: Hit[] = JSON.parse(scoredJson);
+
+    const failedCount = job.failedAccessions.length;
+    const results: SearchResults = {
+      hits: scoredHits,
+      database_size: job.dbSize || 0,
+      num_sequences: job.uniqueAccessions || 0,
+      query_info: [
+        `${job.totalBlastHits} BLAST hits`,
+        `${job.uniqueAccessions} unique accessions`,
+        job.cappedAt ? `top ${job.cappedAt} processed` : undefined,
+        `${scoredHits.length} structured hits`,
+        failedCount > 0 ? `${failedCount} accessions failed` : undefined,
+      ]
+        .filter(Boolean)
+        .join(" → "),
+    };
+
+    job.phase = "complete";
+    job.results = results;
+    saveJob(job);
+
+    return results;
+  }
+
+  // If we somehow get here with phase=complete, return cached results
+  if (job.phase === "complete" && job.results) {
+    return job.results;
+  }
+
+  throw new Error(`Unexpected job phase: ${job.phase}`);
 }
 
 function sleep(ms: number): Promise<void> {
