@@ -3,6 +3,8 @@ name: Build & Deploy to GitHub Pages
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -31,6 +33,14 @@ jobs:
       - name: Run Rust tests
         run: cargo test --all
 
+      - name: Run NCBI integration tests
+        if: env.NCBI_API_KEY != ''
+        env:
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+          NCBI_EMAIL: ${{ secrets.NCBI_EMAIL }}
+        run: cargo test --test ncbi_integration -- --ignored --test-threads=1
+        timeout-minutes: 15
+
       - name: Build WASM
         run: wasm-pack build --target web crates/nnnblast-wasm --out-dir ../../web/src/wasm
 
@@ -48,11 +58,13 @@ jobs:
           VITE_PROXY_URL: ${{ vars.PROXY_URL || 'https://nnnblast-cors-proxy.workers.dev' }}
 
       - name: Upload artifact
+        if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
 
   deploy:
+    if: github.event_name == 'push'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

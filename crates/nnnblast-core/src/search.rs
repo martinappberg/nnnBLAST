@@ -268,6 +268,7 @@ pub async fn search_ncbi(
             let fetch_start = region.fetch_start;
             let fetch_end = region.fetch_end;
             let api_key = ncbi_params.api_key.clone();
+            let email = ncbi_params.email.clone();
             let params = params.clone();
             let anchor_idx = anchor_idx;
             let completed = completed.clone();
@@ -283,6 +284,7 @@ pub async fn search_ncbi(
                     fetch_start,
                     fetch_end,
                     api_key.as_deref(),
+                    &email,
                 )
                 .await
                 {
@@ -360,7 +362,7 @@ pub async fn search_ncbi(
     deduplicate_hits(&mut structured_hits);
 
     // Sort by E-value
-    structured_hits.sort_by(|a, b| a.evalue.partial_cmp(&b.evalue).unwrap());
+    structured_hits.sort_by(|a, b| a.evalue.total_cmp(&b.evalue));
 
     let query_info = format!(
         "{} motifs, {} gaps, anchor=motif[{}], {} BLAST candidates, {} structured hits, db={}",
@@ -438,7 +440,7 @@ pub fn search_local(db: &Database, params: &SearchParams) -> SearchResults {
                 query,
                 &motif_scores,
                 db.total_bases,
-                db.sequences.len(),
+                db.sequences.len() as u64,
                 params.match_score,
                 params.mismatch_score,
                 &base_freqs,
@@ -449,7 +451,7 @@ pub fn search_local(db: &Database, params: &SearchParams) -> SearchResults {
         .filter(|hit| hit.evalue <= params.evalue_cutoff)
         .collect();
 
-    hits_with_evalue.sort_by(|a, b| a.evalue.partial_cmp(&b.evalue).unwrap());
+    hits_with_evalue.sort_by(|a, b| a.evalue.total_cmp(&b.evalue));
 
     SearchResults {
         hits: hits_with_evalue,

@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Read};
 #[derive(Debug, Clone)]
 pub struct Database {
     pub sequences: Vec<SubjectSequence>,
-    pub total_bases: usize,
+    pub total_bases: u64,
 }
 
 impl Database {
@@ -57,7 +57,7 @@ impl Database {
             });
         }
 
-        let total_bases = sequences.iter().map(|s| s.sequence.len()).sum();
+        let total_bases: u64 = sequences.iter().map(|s| s.sequence.len() as u64).sum();
 
         Database {
             sequences,

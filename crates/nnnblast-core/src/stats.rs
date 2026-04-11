@@ -81,7 +81,8 @@ fn iupac_match_probability(query_base: u8, base_freqs: &[f64; 4]) -> f64 {
         b'H' => 1.0 - base_freqs[2],                   // not G
         b'V' => 1.0 - base_freqs[3],                   // not T
         b'N' => 1.0,
-        _ => 0.25, // fallback
+        b'X' => 0.0, // X = penalized wildcard, ALWAYS a mismatch
+        _ => 0.25,    // fallback for unknown bases
     }
 }
 
@@ -96,13 +97,13 @@ fn iupac_match_probability(query_base: u8, base_freqs: &[f64; 4]) -> f64 {
 pub fn compute_evalue(
     query: &StructuredQuery,
     motif_scores: &[i32],
-    database_size: usize,
-    num_sequences: usize,
+    database_size: u64,
+    num_sequences: u64,
     match_score: i32,
     mismatch_score: i32,
     base_freqs: &[f64; 4],
 ) -> f64 {
-    let total_query_span = estimate_query_span(query);
+    let total_query_span = estimate_query_span(query) as u64;
 
     // N_eff: both strands, minus the query footprint per sequence
     // Simplified: 2 * (database_size - num_sequences * total_query_span)
@@ -274,5 +275,46 @@ mod tests {
     #[test]
     fn bit_score_positive() {
         assert!(raw_to_bit_score(10) > 0.0);
+    }
+
+    #[test]
+    fn x_wildcard_never_matches() {
+        // X always mismatches — P(match) = 0.0
+        let freqs = [0.25, 0.25, 0.25, 0.25];
+        let p = iupac_match_probability(b'X', &freqs);
+        assert_eq!(p, 0.0);
+    }
+
+    #[test]
+    fn x_wildcard_motif_probability() {
+        // Motif "AX": X always mismatches, so exact match (score=4) is impossible.
+        // With min_score=-1 (allows 1mm): P = P(A matches)*P(X mismatches) = 0.25*1.0 = 0.25
+        let motif = Motif {
+            sequence: b"AX".to_vec(),
+            max_mismatches: None,
+        };
+        let freqs = [0.25, 0.25, 0.25, 0.25];
+        // score(0mm) = 4, score(1mm) = -1, score(2mm) = -6
+        let p = motif_match_probability(&motif, -1, 2, -3, &freqs);
+        assert!((p - 0.25).abs() < 1e-10, "expected 0.25, got {}", p);
+    }
+
+    #[test]
+    fn evalue_with_large_db_size() {
+        // Regression test: NCBI core_nt db is ~991 billion bp, which overflows u32.
+        // E-value must be finite and reasonable, not clamped to 1e-300.
+        let query = StructuredQuery {
+            motifs: vec![Motif {
+                sequence: b"ATCGATCG".to_vec(),
+                max_mismatches: None,
+            }],
+            gaps: vec![],
+        };
+        let freqs = [0.25, 0.25, 0.25, 0.25];
+        let large_db: u64 = 991_049_906_671; // ~991 billion
+        let e = compute_evalue(&query, &[16], large_db, 1, 2, -3, &freqs);
+        assert!(e > 1.0, "E-value should be > 1 for 8bp motif in huge db, got {}", e);
+        assert!(e < 1e10, "E-value should be reasonable, got {}", e);
+        assert!(e != 1e-300, "E-value must not be clamped — db_size was likely truncated");
     }
 }
