@@ -298,12 +298,7 @@ function SearchPage() {
             <button
               key={i}
               className="text-xs px-3 py-1.5 rounded-full border border-[#FECDD3]/50 hover:border-[#F9A8B8] hover:bg-[#FFF0F3] transition-colors text-[#57534E]"
-              onClick={() => {
-                if (loading) handleCancel();
-                setQuery(preset.query);
-                setResults(null);
-                setError(null);
-              }}
+              onClick={() => setQuery(preset.query)}
               title={`${preset.description}\n\nBLAST strategy: ${preset.strategy}`}
             >
               {preset.name}
