@@ -56,8 +56,8 @@ function SearchPage() {
 
   const [query, setQuery] = useState(initialQuery);
   const [database, setDatabase] = useState("core_nt");
-  const [email, setEmail] = useState("");
-  const [apiKey, setApiKey] = useState("");
+  const [email, setEmail] = useState(() => localStorage.getItem("nnnblast_email") || "");
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("nnnblast_api_key") || "");
   const [evalCutoff, setEvalCutoff] = useState(10);
   const [maxAccessions, setMaxAccessions] = useState(500);
   const [loading, setLoading] = useState(false);
@@ -80,6 +80,11 @@ function SearchPage() {
       setQuery(saved.query);
     }
   }, []);
+
+  // Persist email and API key
+  useEffect(() => { localStorage.setItem("nnnblast_email", email); }, [email]);
+  useEffect(() => { localStorage.setItem("nnnblast_api_key", apiKey); }, [apiKey]);
+
   const timerRef = useRef<number | null>(null);
 
   // Elapsed time ticker (1s interval while loading)
@@ -227,6 +232,12 @@ function SearchPage() {
   const handleResume = useCallback((job: PersistedJob) => runSearch(job), [runSearch]);
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
+    if (pollRef.current) {
+      clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+    setLoading(false);
+    setProgress(null);
   }, []);
   const handleDiscard = useCallback(() => {
     clearPersistedJob();
@@ -287,7 +298,12 @@ function SearchPage() {
             <button
               key={i}
               className="text-xs px-3 py-1.5 rounded-full border border-[#FECDD3]/50 hover:border-[#F9A8B8] hover:bg-[#FFF0F3] transition-colors text-[#57534E]"
-              onClick={() => setQuery(preset.query)}
+              onClick={() => {
+                if (loading) handleCancel();
+                setQuery(preset.query);
+                setResults(null);
+                setError(null);
+              }}
               title={`${preset.description}\n\nBLAST strategy: ${preset.strategy}`}
             >
               {preset.name}
