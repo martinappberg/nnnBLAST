@@ -362,7 +362,7 @@ async function fetchWithRetry(
         await sleep(delay);
         continue;
       }
-      if (resp.status >= 500 && attempt < maxRetries) {
+      if (resp.status >= 500 || (resp.status >= 400 && attempt < maxRetries)) {
         await sleep(1000 * Math.pow(2, attempt));
         continue;
       }
