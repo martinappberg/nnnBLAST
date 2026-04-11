@@ -76,7 +76,12 @@ function createPool(): Promise<void> {
     readyPromises.push(readyP);
   }
 
-  poolReadyPromise = Promise.all(readyPromises).then(() => {});
+  poolReadyPromise = Promise.all(readyPromises).then(() => {}).catch((err) => {
+    // Reset so next attempt creates a fresh pool instead of returning the failed promise
+    poolReadyPromise = null;
+    pool = null;
+    throw err;
+  });
   return poolReadyPromise;
 }
 
