@@ -63,6 +63,7 @@ function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResults | null>(null);
+  const [activeQuery, setActiveQuery] = useState<string | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [pollCount, setPollCount] = useState(0);
@@ -77,6 +78,7 @@ function SearchPage() {
       setResumableJob(saved);
     } else if (saved && saved.phase === "complete" && saved.results) {
       setResults(saved.results);
+      setActiveQuery(saved.query);
       setQuery(saved.query);
     }
   }, []);
@@ -160,6 +162,7 @@ function SearchPage() {
     setError(null);
     setResults(null);
     setResumableJob(null);
+    setActiveQuery(resumeJob?.query || query);
     setProgress({ stage: "starting" });
     setElapsed(0);
     setPollCount(0);
@@ -464,6 +467,11 @@ function SearchPage() {
       {/* Progress */}
       {loading && progress && (
         <section className="bg-[#FFF0F3] border border-[#FECDD3]/50 rounded-2xl p-5">
+          {activeQuery && (
+            <div className="text-xs font-mono text-[#A8A29E] mb-3 truncate">
+              Searching: <span className="text-[#57534E]">{activeQuery}</span>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="animate-spin h-5 w-5 border-2 border-[#F9A8B8] border-t-transparent rounded-full" />
@@ -500,9 +508,14 @@ function SearchPage() {
       {/* Results */}
       {results && (
         <section className="bg-white rounded-2xl shadow-sm border border-[#FECDD3]/50 p-6">
+          {activeQuery && activeQuery !== query && (
+            <div className="text-xs font-mono text-[#A8A29E] mb-3 truncate">
+              Results for: <span className="text-[#57534E]">{activeQuery}</span>
+            </div>
+          )}
           <ResultsTable
             results={results}
-            queryMotifs={extractMotifs(query)}
+            queryMotifs={extractMotifs(activeQuery || query)}
           />
         </section>
       )}
