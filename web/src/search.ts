@@ -418,13 +418,15 @@ async function runPipeline(
     const strategyResult = await wasmChooseStrategy(JSON.stringify(parsed.query));
     const strategy = JSON.parse(strategyResult);
 
+    // maxAccessions=0 means "no limit" — use 5000 (NCBI max) for BLAST
+    const hitlistSize = params.maxAccessions > 0 ? params.maxAccessions : 5000;
     const blastParams = new URLSearchParams({
       CMD: "Put",
       PROGRAM: "blastn",
       DATABASE: params.database,
       QUERY: strategy.blast_query,
       EXPECT: "100000",
-      HITLIST_SIZE: "500",
+      HITLIST_SIZE: String(hitlistSize),
       MEGABLAST: "no",
       WORD_SIZE: strategy.blast_query.length < 30 ? "7" : "11",
       FILTER: "F",
